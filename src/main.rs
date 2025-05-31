@@ -95,7 +95,3 @@ fn parse_message(message: String) -> Command {
         _ => Command::Invalid(message),
    }
 }
-
-// WRITE KEY VALUE
-// READ VALUE
-// DELETE VALUE

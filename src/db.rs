@@ -11,16 +11,12 @@ pub struct DB {
 }
 
 impl DB {
-    // initialize file
-    //
-    // get
-    // set
     pub fn new(db_file_path: &str) -> DB {
         let f_name = utils::get_new_db_file_name(db_file_path).unwrap();
         let file: File = OpenOptions::new()
             .read(true)
-            .write(true) // Ensure write access
-            .create(true) // Create if it doesn't exist
+            .write(true) 
+            .create(true)
             .append(true)
             .open(f_name).unwrap();
 
@@ -46,7 +42,7 @@ impl DB {
 
         match String::from_utf8(str_buffer) {
             Ok(s) => Some(s),
-            Err(_) => None, // Or handle error appropriately
+            Err(_) => None,
         }
     }
 
@@ -67,10 +63,10 @@ impl DB {
     }
 
     pub fn get_compacted(&mut self) -> DB {
-        // make a copy of the db file
+        // make a new DB
         // make a new HashIndex
-        // reading old hashindex pour data into the new dbfile
-        // update the new hashindex with new offsets
+        // deduplicate data using the current db pouring data into the new one
+        // return the new DB
 
         let mut new_db = DB::new(&self.db_file_path);
 
