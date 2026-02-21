@@ -15,7 +15,7 @@ cargo build
 
 ## Running
 
-To run the server, provide a path for the database file as a command-line argument:
+To run the server, provide a base path for the database file as a command-line argument. The server appends a timestamp and `.db` extension to generate the actual filename (e.g., `/tmp/mydb_1700000000.db`):
 
 ```sh
 cargo run -- <path_for_db_file>
@@ -29,6 +29,14 @@ cargo run -- /tmp/my_database
 
 The server will start listening on `0.0.0.0:6666`.
 
+## Testing
+
+To run all tests (4 unit + 3 integration):
+
+```sh
+cargo test
+```
+
 ## Commands
 
 You can interact with the server using a TCP client (e.g., `netcat` or `telnet`). The following commands are supported:
@@ -39,6 +47,10 @@ You can interact with the server using a TCP client (e.g., `netcat` or `telnet`)
   * Example: `READ mykey`
 * **DELETE `<key>`**: Deletes the key and its associated value.
   * Example: `DELETE mykey`
+* **COMPACT**: Triggers background compaction of the database file. Compaction rewrites only the latest values into a new file, removing deleted keys and old overwrites. Writes block until compaction finishes. Concurrent compaction requests are rejected.
+  * Example: `COMPACT`
+* **STATS**: Returns runtime counters as `key=value` lines. Includes read/write/delete counts, active connections, compaction state, and write-blocking metrics.
+  * Example: `STATS`
 
 Each command should be sent on a new line, followed by an empty line to signify the end of the request.
 
@@ -53,5 +65,9 @@ Each command should be sent on a new line, followed by an empty line to signify 
     READ name
 
     DELETE name
+
+    COMPACT
+
+    STATS
 
 ```
