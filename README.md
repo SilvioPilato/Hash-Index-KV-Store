@@ -2,7 +2,7 @@
 
 **⚠️ Experimental Project: This software is for experimental purposes only and is not intended for production use. Use at your own risk.**
 
-This project implements a simple key-value store that communicates over TCP. It uses a hash index in memory to keep track of data stored in a file.
+This project implements a simple key-value store that communicates over TCP. It uses a hash index in memory to keep track of data stored in a file. On startup, if an existing database file is provided, the server rebuilds the index by scanning the file so that previously stored data is available immediately.
 The purpose of the project is merely didactical, but if you want to tinker with it feel free to do it.
 
 ## Building
@@ -31,7 +31,7 @@ The server will start listening on `0.0.0.0:6666`.
 
 ## Testing
 
-To run all tests (4 unit + 3 integration):
+To run all tests (7 unit + 3 integration):
 
 ```sh
 cargo test
