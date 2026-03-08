@@ -29,18 +29,31 @@ impl DB {
         }
     }
 
+    /// Retrieves the value associated with the given key.
+    ///
+    /// Looks up the key in the in-memory index to find the byte offset in the
+    /// database file, then reads the entry using the format:
+    /// `|size_k (8 bytes BE u64)|size_v (8 bytes BE u64)|key (raw UTF-8)|value (raw UTF-8)|`
+    /// Skips past the key bytes and returns the value.
+    ///
+    /// Returns `None` if the key is not in the index or if the stored bytes
+    /// are not valid UTF-8.
     pub fn get(&self, key: &str) -> Option<String> {
         let offset = self.index.get(key)?;
 
         let mut file = self.db_file.lock().unwrap();
-        let mut size_buffer = [0; 8];
-        file.seek(SeekFrom::Start(*offset)).unwrap();
-        file.read_exact(&mut size_buffer).unwrap();
-        let size = u64::from_be_bytes(size_buffer);
+        let mut k_size_buffer = [0; 8];
+        let mut v_size_buffer = [0; 8];
 
-        let v_offset = offset + 8;
-        let mut str_buffer = vec![0; size as usize];
-        file.seek(SeekFrom::Start(v_offset)).unwrap();
+        file.seek(SeekFrom::Start(*offset)).unwrap();
+        file.read_exact(&mut k_size_buffer).unwrap();
+        let k_size = u64::from_be_bytes(k_size_buffer);
+
+        file.read_exact(&mut v_size_buffer).unwrap();
+        let v_size = u64::from_be_bytes(v_size_buffer);
+
+        file.seek(SeekFrom::Current(k_size as i64)).unwrap();
+        let mut str_buffer: Vec<u8> = vec![0; v_size as usize];
         file.read_exact(&mut str_buffer).unwrap();
 
         match String::from_utf8(str_buffer) {
@@ -49,13 +62,26 @@ impl DB {
         }
     }
 
+    /// Inserts or updates a key-value pair in the database.
+    ///
+    /// Appends an entry to the end of the database file using the format:
+    /// `|size_k (8 bytes BE u64)|size_v (8 bytes BE u64)|key (raw UTF-8)|value (raw UTF-8)|`
+    /// with no separators between fields. Then records the byte offset of
+    /// this new entry in the in-memory index under the given key.
+    ///
+    /// If the key already existed, the old entry remains as dead bytes in the
+    /// file (reclaimed later by compaction) and the index is updated to point
+    /// to the new one.
     pub fn set(&mut self, key: &str, value: &str) {
         let mut file = self.db_file.lock().unwrap();
         let current_eof_offset = file.seek(SeekFrom::End(0)).unwrap();
+        let key_bytes = key.as_bytes();
+        let key_size = key.len() as u64;
         let value_bytes = value.as_bytes();
         let value_size: u64 = value_bytes.len() as u64;
-
+        file.write_all(&key_size.to_be_bytes()).unwrap();
         file.write_all(&value_size.to_be_bytes()).unwrap();
+        file.write_all(key_bytes).unwrap();
         file.write_all(value_bytes).unwrap();
 
         self.index.set(key.to_string(), current_eof_offset);
@@ -101,6 +127,27 @@ mod tests {
         let mut path = env::temp_dir();
         path.push(format!("kv_store_{}_{}", suffix, nanos));
         path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn set_and_get() {
+        let mut db = DB::new(&temp_db_path("set_get"));
+        db.set("hello", "world");
+        assert_eq!(db.get("hello").as_deref(), Some("world"));
+    }
+
+    #[test]
+    fn get_missing_key() {
+        let db = DB::new(&temp_db_path("missing"));
+        assert_eq!(db.get("nope"), None);
+    }
+
+    #[test]
+    fn set_overwrite() {
+        let mut db = DB::new(&temp_db_path("overwrite"));
+        db.set("k", "old");
+        db.set("k", "new");
+        assert_eq!(db.get("k").as_deref(), Some("new"));
     }
 
     #[test]

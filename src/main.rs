@@ -1,19 +1,20 @@
 use db::DB;
 use stats::Stats;
 use std::{
-    env,
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
-    sync::{atomic::Ordering, Arc, RwLock},
+    sync::{Arc, RwLock, atomic::Ordering},
     thread,
     time::Instant,
 };
 
+use crate::settings::Settings;
+
 mod db;
 mod hash_index;
+mod settings;
 mod stats;
 mod utils;
-
 enum Command {
     Write(String, String),
     Read(String),
@@ -24,12 +25,11 @@ enum Command {
 }
 
 fn main() {
-    let f_path = env::args().nth(1).expect("No command given");
-    let database = DB::new(&f_path);
+    let settings = Settings::get_from_args();
+    let database = DB::new(&settings.db_file_path);
     let db_handle = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());
-    let addr = "0.0.0.0:6666";
-    let listener = TcpListener::bind(addr).unwrap();
+    let listener = TcpListener::bind(&settings.tcp_addr).unwrap();
 
     for stream in listener.incoming() {
         match stream {
