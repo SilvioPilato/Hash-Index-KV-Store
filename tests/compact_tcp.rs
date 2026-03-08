@@ -68,6 +68,21 @@ fn send_command(command: &str) -> String {
     response.trim_end().to_string()
 }
 
+fn wait_for_compaction() {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(5);
+    loop {
+        let stats = send_command("STATS");
+        if !stats.contains("\"compacting\":true") {
+            return;
+        }
+        if start.elapsed() > timeout {
+            panic!("Compaction did not finish within timeout");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn compact_command_over_tcp() {
     let _guard = test_lock().lock().unwrap();
@@ -80,5 +95,6 @@ fn compact_command_over_tcp() {
     assert_eq!(send_command("COMPACT"), "OK");
     assert_eq!(send_command("WRITE k1 v1"), "OK");
     assert_eq!(send_command("COMPACT"), "OK");
+    wait_for_compaction();
     assert_eq!(send_command("READ k1"), "v1");
 }

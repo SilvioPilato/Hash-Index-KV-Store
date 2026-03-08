@@ -26,7 +26,10 @@ enum Command {
 
 fn main() {
     let settings = Settings::get_from_args();
-    let database = DB::new(&settings.db_file_path);
+    let database = match DB::from_file(&settings.db_file_path).unwrap() {
+        Some(db) => db,
+        None => DB::new(&settings.db_file_path),
+    };
     let db_handle = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());
     let listener = TcpListener::bind(&settings.tcp_addr).unwrap();
@@ -87,7 +90,13 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
             println!("Parsed READ command: key='{}'", key);
             let db = database.read().unwrap();
             stats.reads.fetch_add(1, Ordering::Relaxed);
-            db.get(&key).unwrap_or("Key not found".to_string())
+            match db.get(&key) {
+                Ok(result) => match result {
+                    Some((_, v)) => v,
+                    None => "Not found".to_string(),
+                },
+                Err(error) => error.to_string(),
+            }
         }
         Command::Delete(key) => {
             println!("Parsed DELETE command: key='{}'", key);
@@ -117,7 +126,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
                 };
 
                 let mut db = db_clone.write().unwrap();
-                *db = compacted;
+                *db = compacted.unwrap();
 
                 stats_clone
                     .last_compact_end_ms

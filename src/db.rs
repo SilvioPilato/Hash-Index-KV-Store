@@ -1,9 +1,10 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Error, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use std::sync::Mutex;
 
 use crate::hash_index::HashIndex;
-use crate::utils;
+use crate::utils::{self, read_record_header};
 
 pub struct DB {
     index: HashIndex,
@@ -29,6 +30,23 @@ impl DB {
         }
     }
 
+    pub fn from_file(db_file_path: &str) -> Result<Option<DB>, Error> {
+        if !Path::new(db_file_path).exists() {
+            return Ok(None);
+        }
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(db_file_path)?;
+
+        // open
+        Ok(Some(DB {
+            index: HashIndex::from_file(&mut file)?,
+            db_file: Mutex::new(file),
+            db_file_path: db_file_path.to_string(),
+        }))
+    }
+
     /// Retrieves the value associated with the given key.
     ///
     /// Looks up the key in the in-memory index to find the byte offset in the
@@ -38,28 +56,25 @@ impl DB {
     ///
     /// Returns `None` if the key is not in the index or if the stored bytes
     /// are not valid UTF-8.
-    pub fn get(&self, key: &str) -> Option<String> {
-        let offset = self.index.get(key)?;
-
+    pub fn get(&self, key: &str) -> Result<Option<(String, String)>, Error> {
+        let offset = match self.index.get(key) {
+            Some(o) => *o,
+            None => return Ok(None),
+        };
         let mut file = self.db_file.lock().unwrap();
-        let mut k_size_buffer = [0; 8];
-        let mut v_size_buffer = [0; 8];
 
-        file.seek(SeekFrom::Start(*offset)).unwrap();
-        file.read_exact(&mut k_size_buffer).unwrap();
-        let k_size = u64::from_be_bytes(k_size_buffer);
+        file.seek(SeekFrom::Start(offset)).unwrap();
+        let header = read_record_header(&mut *file)?;
+        let mut k_buffer: Vec<u8> = vec![0; header.key_size as usize];
+        file.read_exact(&mut k_buffer)?;
 
-        file.read_exact(&mut v_size_buffer).unwrap();
-        let v_size = u64::from_be_bytes(v_size_buffer);
+        let mut v_buffer: Vec<u8> = vec![0; header.value_size as usize];
+        file.read_exact(&mut v_buffer)?;
+        let key = String::from_utf8(k_buffer).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        let value =
+            String::from_utf8(v_buffer).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
 
-        file.seek(SeekFrom::Current(k_size as i64)).unwrap();
-        let mut str_buffer: Vec<u8> = vec![0; v_size as usize];
-        file.read_exact(&mut str_buffer).unwrap();
-
-        match String::from_utf8(str_buffer) {
-            Ok(s) => Some(s),
-            Err(_) => None,
-        }
+        Ok(Some((key, value)))
     }
 
     /// Inserts or updates a key-value pair in the database.
@@ -72,45 +87,42 @@ impl DB {
     /// If the key already existed, the old entry remains as dead bytes in the
     /// file (reclaimed later by compaction) and the index is updated to point
     /// to the new one.
-    pub fn set(&mut self, key: &str, value: &str) {
+    pub fn set(&mut self, key: &str, value: &str) -> Result<(), Error> {
         let mut file = self.db_file.lock().unwrap();
-        let current_eof_offset = file.seek(SeekFrom::End(0)).unwrap();
+        let current_eof_offset = file.seek(SeekFrom::End(0))?;
         let key_bytes = key.as_bytes();
         let key_size = key.len() as u64;
         let value_bytes = value.as_bytes();
         let value_size: u64 = value_bytes.len() as u64;
-        file.write_all(&key_size.to_be_bytes()).unwrap();
-        file.write_all(&value_size.to_be_bytes()).unwrap();
-        file.write_all(key_bytes).unwrap();
-        file.write_all(value_bytes).unwrap();
+        let mut buf = Vec::with_capacity(16 + key_bytes.len() + value_bytes.len());
+        buf.extend_from_slice(&key_size.to_be_bytes());
+        buf.extend_from_slice(&value_size.to_be_bytes());
+        buf.extend_from_slice(key_bytes);
+        buf.extend_from_slice(value_bytes);
+        file.write_all(&buf)?;
 
         self.index.set(key.to_string(), current_eof_offset);
-        file.flush().unwrap();
+        file.flush()?;
+        Ok(())
     }
 
     pub fn delete(&mut self, key: &str) {
         self.index.delete(&key);
     }
 
-    pub fn get_compacted(&self) -> DB {
-        // make a new DB
-        // make a new HashIndex
-        // deduplicate data using the current db pouring data into the new one
-        // return the new DB
-
+    pub fn get_compacted(&self) -> Result<DB, Error> {
         let mut new_db = DB::new(&self.db_file_path);
 
         let keys: Vec<String> = self.index.ls_keys().cloned().collect();
         for k in keys {
-            let value = if let Some(value) = self.get(&k) {
-                value
-            } else {
-                continue;
+            let value = match self.get(&k)? {
+                Some((_, value)) => value,
+                None => continue,
             };
-            new_db.set(&k, &value);
+            new_db.set(&k, &value)?;
         }
 
-        return new_db;
+        Ok(new_db)
     }
 }
 
@@ -132,68 +144,75 @@ mod tests {
     #[test]
     fn set_and_get() {
         let mut db = DB::new(&temp_db_path("set_get"));
-        db.set("hello", "world");
-        assert_eq!(db.get("hello").as_deref(), Some("world"));
+        db.set("hello", "world").unwrap();
+        let (_, value) = db.get("hello").unwrap().unwrap();
+        assert_eq!(value, "world");
     }
 
     #[test]
     fn get_missing_key() {
         let db = DB::new(&temp_db_path("missing"));
-        assert_eq!(db.get("nope"), None);
+        assert_eq!(db.get("nope").unwrap(), None);
     }
 
     #[test]
     fn set_overwrite() {
         let mut db = DB::new(&temp_db_path("overwrite"));
-        db.set("k", "old");
-        db.set("k", "new");
-        assert_eq!(db.get("k").as_deref(), Some("new"));
+        db.set("k", "old").unwrap();
+        db.set("k", "new").unwrap();
+        let (_, value) = db.get("k").unwrap().unwrap();
+        assert_eq!(value, "new");
     }
 
     #[test]
     fn compact_preserves_values() {
         let mut db = DB::new(&temp_db_path("preserve"));
-        db.set("k1", "v1");
-        db.set("k2", "v2");
+        db.set("k1", "v1").unwrap();
+        db.set("k2", "v2").unwrap();
 
-        let compacted = db.get_compacted();
+        let compacted = db.get_compacted().unwrap();
 
-        assert_eq!(compacted.get("k1").as_deref(), Some("v1"));
-        assert_eq!(compacted.get("k2").as_deref(), Some("v2"));
+        let (_, v1) = compacted.get("k1").unwrap().unwrap();
+        let (_, v2) = compacted.get("k2").unwrap().unwrap();
+        assert_eq!(v1, "v1");
+        assert_eq!(v2, "v2");
     }
 
     #[test]
     fn compact_keeps_latest_value() {
         let mut db = DB::new(&temp_db_path("latest"));
-        db.set("k1", "v1");
-        db.set("k1", "v2");
+        db.set("k1", "v1").unwrap();
+        db.set("k1", "v2").unwrap();
 
-        let compacted = db.get_compacted();
+        let compacted = db.get_compacted().unwrap();
 
-        assert_eq!(compacted.get("k1").as_deref(), Some("v2"));
+        let (_, value) = compacted.get("k1").unwrap().unwrap();
+        assert_eq!(value, "v2");
     }
 
     #[test]
     fn compact_drops_deleted_keys() {
         let mut db = DB::new(&temp_db_path("deleted"));
-        db.set("k1", "v1");
+        db.set("k1", "v1").unwrap();
         db.delete("k1");
 
-        let compacted = db.get_compacted();
+        let compacted = db.get_compacted().unwrap();
 
-        assert_eq!(compacted.get("k1"), None);
+        assert_eq!(compacted.get("k1").unwrap(), None);
     }
 
     #[test]
     fn compact_is_idempotent() {
         let mut db = DB::new(&temp_db_path("idempotent"));
-        db.set("k1", "v1");
-        db.set("k2", "v2");
+        db.set("k1", "v1").unwrap();
+        db.set("k2", "v2").unwrap();
 
-        let compacted = db.get_compacted();
-        let compacted_again = compacted.get_compacted();
+        let compacted = db.get_compacted().unwrap();
+        let compacted_again = compacted.get_compacted().unwrap();
 
-        assert_eq!(compacted_again.get("k1").as_deref(), Some("v1"));
-        assert_eq!(compacted_again.get("k2").as_deref(), Some("v2"));
+        let (_, v1) = compacted_again.get("k1").unwrap().unwrap();
+        let (_, v2) = compacted_again.get("k2").unwrap().unwrap();
+        assert_eq!(v1, "v1");
+        assert_eq!(v2, "v2");
     }
 }
