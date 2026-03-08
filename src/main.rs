@@ -40,16 +40,18 @@ fn main() {
                 println!("New connection: {}", stream.peer_addr().unwrap());
                 let shared_db = Arc::clone(&db_handle);
                 let shared_stats = Arc::clone(&stats);
-                shared_stats
-                    .active_connections
-                    .fetch_add(1, Ordering::Relaxed);
-                let response = handle_stream(&stream, shared_db, &shared_stats);
-                shared_stats
-                    .active_connections
-                    .fetch_sub(1, Ordering::Relaxed);
-                stream
-                    .write_all(response.as_bytes())
-                    .expect("Could not write response to stream");
+                thread::spawn(move || {
+                    shared_stats
+                        .active_connections
+                        .fetch_add(1, Ordering::Relaxed);
+                    let response = handle_stream(&stream, shared_db, &shared_stats);
+                    shared_stats
+                        .active_connections
+                        .fetch_sub(1, Ordering::Relaxed);
+                    stream
+                        .write_all(response.as_bytes())
+                        .expect("Could not write response to stream");
+                });
             }
             Err(e) => {
                 eprintln!("Error accepting connection: {}", e);
@@ -82,9 +84,14 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
             stats
                 .write_blocked_total_ms
                 .fetch_add(lock_elapsed, Ordering::Relaxed);
-            db.set(&key, &value);
-            stats.writes.fetch_add(1, Ordering::Relaxed);
-            "OK".to_string()
+
+            match db.set(&key, &value) {
+                Ok(_) => {
+                    stats.writes.fetch_add(1, Ordering::Relaxed);
+                    "OK".to_string()
+                }
+                Err(err) => err.to_string(),
+            }
         }
         Command::Read(key) => {
             println!("Parsed READ command: key='{}'", key);
@@ -152,7 +159,13 @@ fn parse_message(message: String) -> Command {
     }
 
     match words[0].to_uppercase().as_str() {
-        "WRITE" => Command::Write(words[1].to_string(), words[2..].concat()),
+        "WRITE" => {
+            if words.len() > 2 {
+                Command::Write(words[1].to_string(), words[2..].join(" "))
+            } else {
+                Command::Invalid(message)
+            }
+        }
         "READ" => {
             if words.len() == 2 {
                 Command::Read(words[1].to_string())
