@@ -4,7 +4,7 @@ use std::{
     io::{Error, ErrorKind, Read, Seek, SeekFrom},
 };
 
-use crate::utils::read_record_header;
+use crate::utils::{read_record, read_record_header};
 
 /// In-memory index mapping keys to their byte offsets in the database file.
 pub struct HashIndex {
@@ -48,16 +48,14 @@ impl HashIndex {
 
         while file.seek(SeekFrom::Current(0))? < file_size {
             let record_offset = file.seek(SeekFrom::Current(0))?;
-            let header = read_record_header(file)?;
-            let mut k_buffer = vec![0u8; header.key_size as usize];
-            file.read_exact(&mut k_buffer)?;
-            file.seek(SeekFrom::Current(header.value_size as i64))?;
+            let record = read_record(file)?;
+            let header = record.header;
 
             if header.tombstone {
+                hashmap.remove(&record.key);
                 continue;
             }
-            let key =
-                String::from_utf8(k_buffer).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+            let key = record.key;
             hashmap.insert(key, record_offset);
         }
 
