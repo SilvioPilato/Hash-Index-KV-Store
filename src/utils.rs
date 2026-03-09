@@ -1,7 +1,8 @@
 use std::{
     format,
-    io::{self, Read},
+    io::{self, Error, ErrorKind, Read},
     time::SystemTime,
+    vec,
 };
 
 /// Generates a unique database file name by appending the current Unix
@@ -23,6 +24,19 @@ pub struct RecordHeader {
     pub key_size: u64,
     /// Length of the value in bytes.
     pub value_size: u64,
+
+    pub tombstone: bool,
+}
+
+/// The fixed-size header that precedes every key-value record on disk.
+///
+/// Layout: `|key_size (8 bytes BE u64)|value_size (8 bytes BE u64)|`
+pub struct Record {
+    pub header: RecordHeader,
+    /// Length of the key in bytes.
+    pub key: String,
+    /// Length of the value in bytes.
+    pub value: String,
 }
 
 /// Reads a [`RecordHeader`] from the current position of the given reader.
@@ -33,10 +47,33 @@ pub struct RecordHeader {
 pub fn read_record_header(file: &mut impl Read) -> io::Result<RecordHeader> {
     let mut k_buf = [0u8; 8];
     let mut v_buf = [0u8; 8];
+    let mut t_buf = [0u8; 1];
+
     file.read_exact(&mut k_buf)?;
     file.read_exact(&mut v_buf)?;
+    file.read_exact(&mut t_buf)?;
     Ok(RecordHeader {
         key_size: u64::from_be_bytes(k_buf),
         value_size: u64::from_be_bytes(v_buf),
+        tombstone: t_buf[0] != 0,
     })
+}
+
+pub fn read_record(file: &mut impl Read) -> io::Result<Record> {
+    match read_record_header(file) {
+        Ok(header) => {
+            let mut k_buf = vec![0u8; header.key_size as usize];
+            let mut v_buf: Vec<u8> = vec![0u8; header.value_size as usize];
+            file.read_exact(&mut k_buf)?;
+            file.read_exact(&mut v_buf)?;
+
+            Ok(Record {
+                header: header,
+                key: String::from_utf8(k_buf).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
+                value: String::from_utf8(v_buf)
+                    .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
+            })
+        }
+        Err(err) => Err(err),
+    }
 }

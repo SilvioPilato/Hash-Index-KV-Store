@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::hash_index::HashIndex;
-use crate::utils::{self, read_record_header};
+use crate::utils::{self, Record, read_record, read_record_header};
 
 pub struct DB {
     index: HashIndex,
@@ -19,7 +19,6 @@ impl DB {
             .read(true)
             .write(true)
             .create(true)
-            .append(true)
             .open(f_name)
             .unwrap();
 
@@ -62,19 +61,11 @@ impl DB {
             None => return Ok(None),
         };
         let mut file = self.db_file.lock().unwrap();
-
         file.seek(SeekFrom::Start(offset)).unwrap();
-        let header = read_record_header(&mut *file)?;
-        let mut k_buffer: Vec<u8> = vec![0; header.key_size as usize];
-        file.read_exact(&mut k_buffer)?;
 
-        let mut v_buffer: Vec<u8> = vec![0; header.value_size as usize];
-        file.read_exact(&mut v_buffer)?;
-        let key = String::from_utf8(k_buffer).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-        let value =
-            String::from_utf8(v_buffer).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        let record = read_record(&mut *file)?;
 
-        Ok(Some((key, value)))
+        Ok(Some((record.key, record.value)))
     }
 
     /// Inserts or updates a key-value pair in the database.
@@ -94,9 +85,11 @@ impl DB {
         let key_size = key.len() as u64;
         let value_bytes = value.as_bytes();
         let value_size: u64 = value_bytes.len() as u64;
-        let mut buf = Vec::with_capacity(16 + key_bytes.len() + value_bytes.len());
+        let tombstone_marker: u8 = 0;
+        let mut buf = Vec::with_capacity(17 + key_bytes.len() + value_bytes.len());
         buf.extend_from_slice(&key_size.to_be_bytes());
         buf.extend_from_slice(&value_size.to_be_bytes());
+        buf.extend_from_slice(&tombstone_marker.to_be_bytes());
         buf.extend_from_slice(key_bytes);
         buf.extend_from_slice(value_bytes);
         file.write_all(&buf)?;
@@ -106,8 +99,18 @@ impl DB {
         Ok(())
     }
 
-    pub fn delete(&mut self, key: &str) {
-        self.index.delete(&key);
+    pub fn delete(&mut self, key: &str) -> Result<Option<()>, Error> {
+        let mut file = self.db_file.lock().unwrap();
+        match self.index.delete(&key) {
+            Some(offset) => {
+                let tombstone_buf = &[1u8];
+                file.seek(SeekFrom::Start(offset + 8 + 8))?;
+                file.write_all(tombstone_buf)?;
+                file.flush()?;
+                Ok(Some(()))
+            }
+            None => Ok(None),
+        }
     }
 
     pub fn get_compacted(&self) -> Result<DB, Error> {

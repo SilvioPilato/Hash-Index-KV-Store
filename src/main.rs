@@ -108,9 +108,16 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
         Command::Delete(key) => {
             println!("Parsed DELETE command: key='{}'", key);
             let mut db = database.write().unwrap();
-            db.delete(&key);
-            stats.deletes.fetch_add(1, Ordering::Relaxed);
-            "OK".to_string()
+            match db.delete(&key) {
+                Ok(result) => match result {
+                    Some(()) => {
+                        stats.deletes.fetch_add(1, Ordering::Relaxed);
+                        "OK".to_string()
+                    }
+                    None => "Not found".to_string(),
+                },
+                Err(error) => error.to_string(),
+            }
         }
         Command::Compact => {
             println!("Parsed COMPACT command");
