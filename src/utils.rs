@@ -1,9 +1,13 @@
 use std::{
     format,
-    io::{self, Error, ErrorKind, Read},
+    io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write},
     time::SystemTime,
     vec,
 };
+
+pub const SIZE_FIELD_LEN: usize = 8;
+const TOMBSTONE_LEN: usize = 1;
+pub const RECORD_HEADER_LEN: usize = SIZE_FIELD_LEN * 2 + TOMBSTONE_LEN;
 
 /// Generates a unique database file name by appending the current Unix
 /// timestamp (in seconds) to the given base path.
@@ -45,9 +49,9 @@ pub struct Record {
 /// the parsed key and value sizes. The reader is left positioned at the
 /// first byte of the key payload.
 pub fn read_record_header(file: &mut impl Read) -> io::Result<RecordHeader> {
-    let mut k_buf = [0u8; 8];
-    let mut v_buf = [0u8; 8];
-    let mut t_buf = [0u8; 1];
+    let mut k_buf = [0u8; SIZE_FIELD_LEN];
+    let mut v_buf = [0u8; SIZE_FIELD_LEN];
+    let mut t_buf = [0u8; TOMBSTONE_LEN];
 
     file.read_exact(&mut k_buf)?;
     file.read_exact(&mut v_buf)?;
@@ -76,4 +80,25 @@ pub fn read_record(file: &mut impl Read) -> io::Result<Record> {
         }
         Err(err) => Err(err),
     }
+}
+
+pub fn read_record_at(file: &mut (impl Read + Seek), offset: u64) -> io::Result<Record> {
+    file.seek(SeekFrom::Start(offset))?;
+    Ok(read_record(file)?)
+}
+
+pub fn append_record(file: &mut (impl Read + Write + Seek), record: &Record) -> io::Result<u64> {
+    let current_eof_offset = file.seek(SeekFrom::End(0))?;
+
+    let mut buf = Vec::with_capacity(
+        RECORD_HEADER_LEN + record.header.key_size as usize + record.header.value_size as usize,
+    );
+    buf.extend_from_slice(&record.header.key_size.to_be_bytes());
+    buf.extend_from_slice(&record.header.value_size.to_be_bytes());
+    buf.extend_from_slice(&[record.header.tombstone as u8]);
+    buf.extend_from_slice(&record.key.as_bytes());
+    buf.extend_from_slice(&record.value.as_bytes());
+    file.write_all(&buf)?;
+    file.flush()?;
+    Ok(current_eof_offset)
 }

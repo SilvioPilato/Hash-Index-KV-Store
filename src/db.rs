@@ -1,10 +1,12 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Error, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{Error, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Mutex;
 
 use crate::hash_index::HashIndex;
-use crate::utils::{self, Record, read_record, read_record_header};
+use crate::utils::{
+    Record, RecordHeader, append_record, get_new_db_file_name, read_record, read_record_at,
+};
 
 pub struct DB {
     index: HashIndex,
@@ -14,7 +16,7 @@ pub struct DB {
 
 impl DB {
     pub fn new(db_file_path: &str) -> DB {
-        let f_name = utils::get_new_db_file_name(db_file_path).unwrap();
+        let f_name = get_new_db_file_name(db_file_path).unwrap();
         let file: File = OpenOptions::new()
             .read(true)
             .write(true)
@@ -80,33 +82,36 @@ impl DB {
     /// to the new one.
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), Error> {
         let mut file = self.db_file.lock().unwrap();
-        let current_eof_offset = file.seek(SeekFrom::End(0))?;
-        let key_bytes = key.as_bytes();
-        let key_size = key.len() as u64;
-        let value_bytes = value.as_bytes();
-        let value_size: u64 = value_bytes.len() as u64;
-        let tombstone_marker: u8 = 0;
-        let mut buf = Vec::with_capacity(17 + key_bytes.len() + value_bytes.len());
-        buf.extend_from_slice(&key_size.to_be_bytes());
-        buf.extend_from_slice(&value_size.to_be_bytes());
-        buf.extend_from_slice(&tombstone_marker.to_be_bytes());
-        buf.extend_from_slice(key_bytes);
-        buf.extend_from_slice(value_bytes);
-        file.write_all(&buf)?;
+        let record = Record {
+            header: RecordHeader {
+                key_size: key.len() as u64,
+                value_size: value.len() as u64,
+                tombstone: false,
+            },
+            key: key.to_string(),
+            value: value.to_string(),
+        };
+        let offset = append_record(&mut *file, &record)?;
+        self.index.set(key.to_string(), offset);
 
-        self.index.set(key.to_string(), current_eof_offset);
-        file.flush()?;
         Ok(())
     }
 
     pub fn delete(&mut self, key: &str) -> Result<Option<()>, Error> {
         let mut file = self.db_file.lock().unwrap();
-        match self.index.delete(&key) {
+        match self.index.delete(key) {
             Some(offset) => {
-                let tombstone_buf = &[1u8];
-                file.seek(SeekFrom::Start(offset + 8 + 8))?;
-                file.write_all(tombstone_buf)?;
-                file.flush()?;
+                let old_record = read_record_at(&mut *file, offset)?;
+                let new_record = Record {
+                    header: RecordHeader {
+                        key_size: old_record.header.key_size,
+                        value_size: old_record.header.value_size,
+                        tombstone: true,
+                    },
+                    key: old_record.key,
+                    value: old_record.value,
+                };
+                append_record(&mut *file, &new_record)?;
                 Ok(Some(()))
             }
             None => Ok(None),
@@ -197,7 +202,7 @@ mod tests {
     fn compact_drops_deleted_keys() {
         let mut db = DB::new(&temp_db_path("deleted"));
         db.set("k1", "v1").unwrap();
-        db.delete("k1");
+        db.delete("k1").unwrap();
 
         let compacted = db.get_compacted().unwrap();
 

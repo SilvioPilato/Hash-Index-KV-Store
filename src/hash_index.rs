@@ -1,10 +1,10 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Error, ErrorKind, Read, Seek, SeekFrom},
+    io::{Error, Seek, SeekFrom},
 };
 
-use crate::utils::{read_record, read_record_header};
+use crate::utils::read_record;
 
 /// In-memory index mapping keys to their byte offsets in the database file.
 pub struct HashIndex {
