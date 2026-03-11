@@ -28,7 +28,7 @@ impl Settings {
                 }
                 "-n" | "--name" => {
                     if let Some(value) = args.next() {
-                        let name: String = value.parse().expect("Invalid tcp address provided");
+                        let name: String = value.parse().expect("Invalid db name");
                         settings.db_name = name.to_string();
                     }
                 }
