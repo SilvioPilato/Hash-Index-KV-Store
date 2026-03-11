@@ -22,14 +22,10 @@ pub struct RecordHeader {
     pub tombstone: bool,
 }
 
-/// The fixed-size header that precedes every key-value record on disk.
-///
-/// Layout: `|key_size (8 bytes BE u64)|value_size (8 bytes BE u64)|`
+/// A complete key-value record: the fixed-size header followed by the key and value payloads.
 pub struct Record {
     pub header: RecordHeader,
-    /// Length of the key in bytes.
     pub key: String,
-    /// Length of the value in bytes.
     pub value: String,
 }
 

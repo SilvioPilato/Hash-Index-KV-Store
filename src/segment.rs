@@ -9,7 +9,7 @@ impl Segment {
     pub fn new(segment_name: &str) -> Result<Self, std::time::SystemTimeError> {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_secs();
+            .as_millis() as u64;
         Ok(Self {
             segment_name: segment_name.to_string(),
             timestamp,

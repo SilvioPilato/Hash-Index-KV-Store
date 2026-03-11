@@ -14,8 +14,9 @@ pub struct HashIndex {
 impl HashIndex {
     /// Creates an empty index.
     pub(crate) fn new() -> HashIndex {
-        let hashmap = HashMap::new();
-        return HashIndex { hashmap };
+        HashIndex {
+            hashmap: HashMap::new(),
+        }
     }
 
     /// Returns the byte offset for the given key, or `None` if it is not present.

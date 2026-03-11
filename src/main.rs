@@ -67,7 +67,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
         return "Received empty request.".to_string();
     }
 
-    match parse_message(request.concat()) {
+    match parse_message(&request.concat()) {
         Command::Write(key, value) => {
             println!("Parsed WRITE command: key='{}', value='{}'", key, value);
             if stats.compacting.load(Ordering::Relaxed) {
@@ -149,11 +149,11 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
     }
 }
 
-fn parse_message(message: String) -> Command {
+fn parse_message(message: &str) -> Command {
     let words: Vec<&str> = message.trim().split_whitespace().collect();
 
     if words.is_empty() {
-        return Command::Invalid(message);
+        return Command::Invalid(message.to_string());
     }
 
     match words[0].to_uppercase().as_str() {
@@ -161,25 +161,25 @@ fn parse_message(message: String) -> Command {
             if words.len() > 2 {
                 Command::Write(words[1].to_string(), words[2..].join(" "))
             } else {
-                Command::Invalid(message)
+                Command::Invalid(message.to_string())
             }
         }
         "READ" => {
             if words.len() == 2 {
                 Command::Read(words[1].to_string())
             } else {
-                Command::Invalid(message)
+                Command::Invalid(message.to_string())
             }
         }
         "DELETE" => {
             if words.len() == 2 {
                 Command::Delete(words[1].to_string())
             } else {
-                Command::Invalid(message)
+                Command::Invalid(message.to_string())
             }
         }
         "COMPACT" => Command::Compact,
         "STATS" => Command::Stats,
-        _ => Command::Invalid(message),
+        _ => Command::Invalid(message.to_string()),
     }
 }

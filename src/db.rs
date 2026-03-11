@@ -4,16 +4,13 @@ use std::sync::Mutex;
 
 use crate::hash_index::HashIndex;
 use crate::segment::Segment;
-use crate::utils::{
-    Record, RecordHeader, append_record, get_last_segment, read_record, read_record_at,
-};
+use crate::utils::{Record, RecordHeader, append_record, get_last_segment, read_record};
 
 pub struct DB {
     index: HashIndex,
     db_file: Mutex<File>,
     db_path: String,
     db_name: String,
-    current_segment: Segment,
 }
 
 impl DB {
@@ -32,7 +29,6 @@ impl DB {
             db_file: Mutex::new(file),
             db_path: db_path.to_string(),
             db_name: db_name.to_string(),
-            current_segment: segment,
         }
     }
 
@@ -53,7 +49,6 @@ impl DB {
                     db_file: Mutex::new(file),
                     db_path: db_dir.to_string(),
                     db_name: db_name.to_string(),
-                    current_segment: segment,
                 }))
             }
             None => Ok(None),
@@ -112,18 +107,17 @@ impl DB {
     pub fn delete(&mut self, key: &str) -> Result<Option<()>, Error> {
         let mut file = self.db_file.lock().unwrap();
         match self.index.delete(key) {
-            Some(offset) => {
-                let old_record = read_record_at(&mut *file, offset)?;
-                let new_record = Record {
+            Some(_) => {
+                let record = Record {
                     header: RecordHeader {
-                        key_size: old_record.header.key_size,
-                        value_size: old_record.header.value_size,
+                        key_size: key.len() as u64,
+                        value_size: 0,
                         tombstone: true,
                     },
-                    key: old_record.key,
-                    value: old_record.value,
+                    key: key.to_string(),
+                    value: String::new(),
                 };
-                append_record(&mut *file, &new_record)?;
+                append_record(&mut *file, &record)?;
                 Ok(Some(()))
             }
             None => Ok(None),
