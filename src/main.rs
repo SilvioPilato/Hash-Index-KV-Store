@@ -12,9 +12,11 @@ use crate::settings::Settings;
 
 mod db;
 mod hash_index;
+mod segment;
 mod settings;
 mod stats;
 mod utils;
+
 enum Command {
     Write(String, String),
     Read(String),
@@ -26,9 +28,10 @@ enum Command {
 
 fn main() {
     let settings = Settings::get_from_args();
-    let database = match DB::from_file(&settings.db_file_path).unwrap() {
+
+    let database = match DB::from_dir(&settings.db_file_path, &settings.db_name).unwrap() {
         Some(db) => db,
-        None => DB::new(&settings.db_file_path),
+        None => DB::new(&settings.db_file_path, &settings.db_name),
     };
     let db_handle = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());
