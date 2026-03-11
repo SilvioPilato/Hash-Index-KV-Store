@@ -1,51 +1,58 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Error, Seek, SeekFrom};
-use std::path::Path;
 use std::sync::Mutex;
 
 use crate::hash_index::HashIndex;
+use crate::segment::Segment;
 use crate::utils::{
-    Record, RecordHeader, append_record, get_new_db_file_name, read_record, read_record_at,
+    Record, RecordHeader, append_record, get_last_segment, read_record, read_record_at,
 };
 
 pub struct DB {
     index: HashIndex,
     db_file: Mutex<File>,
-    db_file_path: String,
+    db_path: String,
+    db_name: String,
+    current_segment: Segment,
 }
 
 impl DB {
-    pub fn new(db_file_path: &str) -> DB {
-        let f_name = get_new_db_file_name(db_file_path).unwrap();
+    pub fn new(db_path: &str, db_name: &str) -> DB {
+        std::fs::create_dir_all(db_path).unwrap();
+        let segment = Segment::new(db_name).unwrap();
         let file: File = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(f_name)
+            .open(segment.path(db_path))
             .unwrap();
 
         DB {
             index: HashIndex::new(),
             db_file: Mutex::new(file),
-            db_file_path: db_file_path.to_string(),
+            db_path: db_path.to_string(),
+            db_name: db_name.to_string(),
+            current_segment: segment,
         }
     }
 
-    pub fn from_file(db_file_path: &str) -> Result<Option<DB>, Error> {
-        if !Path::new(db_file_path).exists() {
-            return Ok(None);
+    pub fn from_dir(db_dir: &str, db_name: &str) -> Result<Option<DB>, Error> {
+        match get_last_segment(db_dir, db_name).unwrap() {
+            Some(segment) => {
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(segment.path(db_dir))?;
+                Ok(Some(DB {
+                    index: HashIndex::from_file(&mut file)?,
+                    db_file: Mutex::new(file),
+                    db_path: db_dir.to_string(),
+                    db_name: db_name.to_string(),
+                    current_segment: segment,
+                }))
+            }
+            None => Ok(None),
         }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(db_file_path)?;
-
-        // open
-        Ok(Some(DB {
-            index: HashIndex::from_file(&mut file)?,
-            db_file: Mutex::new(file),
-            db_file_path: db_file_path.to_string(),
-        }))
     }
 
     /// Retrieves the value associated with the given key.
@@ -119,7 +126,7 @@ impl DB {
     }
 
     pub fn get_compacted(&self) -> Result<DB, Error> {
-        let mut new_db = DB::new(&self.db_file_path);
+        let mut new_db = DB::new(&self.db_path, &self.db_name);
 
         let keys: Vec<String> = self.index.ls_keys().cloned().collect();
         for k in keys {
@@ -151,7 +158,7 @@ mod tests {
 
     #[test]
     fn set_and_get() {
-        let mut db = DB::new(&temp_db_path("set_get"));
+        let mut db = DB::new(&temp_db_path("set_get"), "test");
         db.set("hello", "world").unwrap();
         let (_, value) = db.get("hello").unwrap().unwrap();
         assert_eq!(value, "world");
@@ -159,13 +166,13 @@ mod tests {
 
     #[test]
     fn get_missing_key() {
-        let db = DB::new(&temp_db_path("missing"));
+        let db = DB::new(&temp_db_path("missing"), "test");
         assert_eq!(db.get("nope").unwrap(), None);
     }
 
     #[test]
     fn set_overwrite() {
-        let mut db = DB::new(&temp_db_path("overwrite"));
+        let mut db = DB::new(&temp_db_path("overwrite"), "test");
         db.set("k", "old").unwrap();
         db.set("k", "new").unwrap();
         let (_, value) = db.get("k").unwrap().unwrap();
@@ -174,7 +181,7 @@ mod tests {
 
     #[test]
     fn compact_preserves_values() {
-        let mut db = DB::new(&temp_db_path("preserve"));
+        let mut db = DB::new(&temp_db_path("preserve"), "test");
         db.set("k1", "v1").unwrap();
         db.set("k2", "v2").unwrap();
 
@@ -188,7 +195,7 @@ mod tests {
 
     #[test]
     fn compact_keeps_latest_value() {
-        let mut db = DB::new(&temp_db_path("latest"));
+        let mut db = DB::new(&temp_db_path("latest"), "test");
         db.set("k1", "v1").unwrap();
         db.set("k1", "v2").unwrap();
 
@@ -200,7 +207,7 @@ mod tests {
 
     #[test]
     fn compact_drops_deleted_keys() {
-        let mut db = DB::new(&temp_db_path("deleted"));
+        let mut db = DB::new(&temp_db_path("deleted"), "test");
         db.set("k1", "v1").unwrap();
         db.delete("k1").unwrap();
 
@@ -211,7 +218,7 @@ mod tests {
 
     #[test]
     fn compact_is_idempotent() {
-        let mut db = DB::new(&temp_db_path("idempotent"));
+        let mut db = DB::new(&temp_db_path("idempotent"), "test");
         db.set("k1", "v1").unwrap();
         db.set("k2", "v2").unwrap();
 

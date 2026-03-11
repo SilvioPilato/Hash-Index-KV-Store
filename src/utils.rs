@@ -1,24 +1,14 @@
 use std::{
-    format,
+    fs::read_dir,
     io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write},
-    time::SystemTime,
     vec,
 };
+
+use crate::segment::Segment;
 
 pub const SIZE_FIELD_LEN: usize = 8;
 const TOMBSTONE_LEN: usize = 1;
 pub const RECORD_HEADER_LEN: usize = SIZE_FIELD_LEN * 2 + TOMBSTONE_LEN;
-
-/// Generates a unique database file name by appending the current Unix
-/// timestamp (in seconds) to the given base path.
-///
-/// Returns a path like `"{db_file_path}_{epoch_secs}.db"`.
-pub fn get_new_db_file_name(db_file_path: &str) -> Result<String, std::time::SystemTimeError> {
-    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(n) => Ok(format!("{}_{}.db", db_file_path, n.as_secs())),
-        Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-    }
-}
 
 /// The fixed-size header that precedes every key-value record on disk.
 ///
@@ -101,4 +91,25 @@ pub fn append_record(file: &mut (impl Read + Write + Seek), record: &Record) -> 
     file.write_all(&buf)?;
     file.flush()?;
     Ok(current_eof_offset)
+}
+
+pub fn get_segments(dir: &str, db_name: &str) -> io::Result<Vec<Segment>> {
+    let mut segments: Vec<Segment> = read_dir(dir)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let segment = Segment::parse(&name)?;
+            if segment.segment_name == db_name {
+                Some(segment)
+            } else {
+                None
+            }
+        })
+        .collect();
+    segments.sort_by_key(|s| s.timestamp);
+    Ok(segments)
+}
+
+pub fn get_last_segment(dir: &str, db_name: &str) -> io::Result<Option<Segment>> {
+    Ok(get_segments(&dir, &db_name)?.into_iter().last())
 }
