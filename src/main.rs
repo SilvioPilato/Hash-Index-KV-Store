@@ -1,5 +1,6 @@
-use db::DB;
-use stats::Stats;
+use hash_index::db::DB;
+use hash_index::settings::Settings;
+use hash_index::stats::Stats;
 use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
@@ -7,15 +8,6 @@ use std::{
     thread,
     time::Instant,
 };
-
-use crate::settings::Settings;
-
-mod db;
-mod hash_index;
-mod segment;
-mod settings;
-mod stats;
-mod utils;
 
 enum Command {
     Write(String, String),
