@@ -73,7 +73,7 @@ fn wait_for_compaction() {
     let timeout = Duration::from_secs(5);
     loop {
         let stats = send_command("STATS");
-        if !stats.contains("\"compacting\":true") {
+        if !stats.contains("compacting=true") {
             return;
         }
         if start.elapsed() > timeout {

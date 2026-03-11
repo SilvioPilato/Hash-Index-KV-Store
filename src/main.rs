@@ -129,12 +129,8 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
             let db_clone = Arc::clone(&database);
             let stats_clone = Arc::clone(stats);
             thread::spawn(move || {
-                let compacted = {
-                    let db = db_clone.read().unwrap();
-                    db.get_compacted()
-                };
-
                 let mut db = db_clone.write().unwrap();
+                let compacted = db.get_compacted();
                 *db = compacted.unwrap();
 
                 stats_clone

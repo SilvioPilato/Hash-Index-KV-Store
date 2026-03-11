@@ -37,7 +37,12 @@ impl DB {
     }
 
     pub fn from_dir(db_dir: &str, db_name: &str) -> Result<Option<DB>, Error> {
-        match get_last_segment(db_dir, db_name).unwrap() {
+        let segment = match get_last_segment(db_dir, db_name) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        match segment {
             Some(segment) => {
                 let mut file = OpenOptions::new()
                     .read(true)
