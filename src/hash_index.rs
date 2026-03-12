@@ -4,7 +4,7 @@ use std::{
     io::{Error, Seek, SeekFrom},
 };
 
-use crate::utils::read_record;
+use crate::record::read_record;
 
 /// In-memory index mapping keys to their byte offsets in the database file.
 pub struct HashIndex {

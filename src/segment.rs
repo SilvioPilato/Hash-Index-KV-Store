@@ -1,5 +1,5 @@
-use std::{path::PathBuf, time::SystemTime};
-
+use std::io;
+use std::{fs::read_dir, path::PathBuf, time::SystemTime};
 pub struct Segment {
     pub segment_name: String,
     pub timestamp: u64,
@@ -33,4 +33,25 @@ impl Segment {
             timestamp,
         })
     }
+}
+
+pub fn get_segments(dir: &str, db_name: &str) -> io::Result<Vec<Segment>> {
+    let mut segments: Vec<Segment> = read_dir(dir)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let segment = Segment::parse(&name)?;
+            if segment.segment_name == db_name {
+                Some(segment)
+            } else {
+                None
+            }
+        })
+        .collect();
+    segments.sort_by_key(|s| s.timestamp);
+    Ok(segments)
+}
+
+pub fn get_last_segment(dir: &str, db_name: &str) -> io::Result<Option<Segment>> {
+    Ok(get_segments(&dir, &db_name)?.into_iter().last())
 }

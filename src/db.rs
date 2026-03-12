@@ -3,8 +3,10 @@ use std::io::{Error, Seek, SeekFrom};
 use std::sync::Mutex;
 
 use crate::hash_index::HashIndex;
-use crate::segment::Segment;
-use crate::utils::{Record, RecordHeader, append_record, get_last_segment, read_record};
+use crate::record::{
+    MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader, append_record, read_record,
+};
+use crate::segment::{Segment, get_last_segment};
 
 pub struct DB {
     index: HashIndex,
@@ -88,6 +90,12 @@ impl DB {
     /// file (reclaimed later by compaction) and the index is updated to point
     /// to the new one.
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), Error> {
+        if key.len() > MAX_KEY_SIZE || value.len() > MAX_VALUE_SIZE {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "key or value exceeds maximum allowed size",
+            ));
+        }
         let mut file = self.db_file.lock().unwrap();
         let record = Record {
             header: RecordHeader {
@@ -105,6 +113,12 @@ impl DB {
     }
 
     pub fn delete(&mut self, key: &str) -> Result<Option<()>, Error> {
+        if key.len() > MAX_KEY_SIZE {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "key or value exceeds maximum allowed size",
+            ));
+        }
         let mut file = self.db_file.lock().unwrap();
         match self.index.delete(key) {
             Some(_) => {

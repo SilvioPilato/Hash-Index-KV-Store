@@ -1,8 +1,9 @@
 use hash_index::db::DB;
+use hash_index::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
 use hash_index::settings::Settings;
 use hash_index::stats::Stats;
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, RwLock, atomic::Ordering},
     thread,
@@ -56,7 +57,8 @@ fn main() {
 }
 
 fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stats>) -> String {
-    let reader = BufReader::new(stream);
+    const MAX_REQUEST_BYTES: u64 = (MAX_KEY_SIZE + MAX_VALUE_SIZE + 1024) as u64;
+    let reader = BufReader::new(stream.take(MAX_REQUEST_BYTES));
     let request: Vec<_> = reader
         .lines()
         .map(|result| result.unwrap_or_else(|_| String::new()))

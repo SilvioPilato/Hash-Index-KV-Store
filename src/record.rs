@@ -1,15 +1,13 @@
 use std::{
-    fs::read_dir,
     io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write},
     vec,
 };
 
-use crate::segment::Segment;
-
 pub const SIZE_FIELD_LEN: usize = 8;
 const TOMBSTONE_LEN: usize = 1;
 pub const RECORD_HEADER_LEN: usize = SIZE_FIELD_LEN * 2 + TOMBSTONE_LEN;
-
+pub const MAX_KEY_SIZE: usize = 1_048_576 * 1;
+pub const MAX_VALUE_SIZE: usize = 1_048_576 * 5;
 /// The fixed-size header that precedes every key-value record on disk.
 ///
 /// Layout: `|key_size (8 bytes BE u64)|value_size (8 bytes BE u64)|`
@@ -52,6 +50,14 @@ pub fn read_record_header(file: &mut impl Read) -> io::Result<RecordHeader> {
 pub fn read_record(file: &mut impl Read) -> io::Result<Record> {
     match read_record_header(file) {
         Ok(header) => {
+            if header.key_size as usize > MAX_KEY_SIZE
+                || header.value_size as usize > MAX_VALUE_SIZE
+            {
+                return Err(Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "key or value exceeds maximum allowed size",
+                ));
+            }
             let mut k_buf = vec![0u8; header.key_size as usize];
             let mut v_buf: Vec<u8> = vec![0u8; header.value_size as usize];
             file.read_exact(&mut k_buf)?;
@@ -87,25 +93,4 @@ pub fn append_record(file: &mut (impl Read + Write + Seek), record: &Record) -> 
     file.write_all(&buf)?;
     file.flush()?;
     Ok(current_eof_offset)
-}
-
-pub fn get_segments(dir: &str, db_name: &str) -> io::Result<Vec<Segment>> {
-    let mut segments: Vec<Segment> = read_dir(dir)?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            let segment = Segment::parse(&name)?;
-            if segment.segment_name == db_name {
-                Some(segment)
-            } else {
-                None
-            }
-        })
-        .collect();
-    segments.sort_by_key(|s| s.timestamp);
-    Ok(segments)
-}
-
-pub fn get_last_segment(dir: &str, db_name: &str) -> io::Result<Option<Segment>> {
-    Ok(get_segments(&dir, &db_name)?.into_iter().last())
 }
