@@ -1,4 +1,5 @@
 use std::{
+    fs::File,
     io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write},
     vec,
 };
@@ -79,7 +80,7 @@ pub fn read_record_at(file: &mut (impl Read + Seek), offset: u64) -> io::Result<
     Ok(read_record(file)?)
 }
 
-pub fn append_record(file: &mut (impl Read + Write + Seek), record: &Record) -> io::Result<u64> {
+pub fn append_record(file: &mut File, record: &Record) -> io::Result<u64> {
     let current_eof_offset = file.seek(SeekFrom::End(0))?;
 
     let mut buf = Vec::with_capacity(
@@ -91,6 +92,6 @@ pub fn append_record(file: &mut (impl Read + Write + Seek), record: &Record) -> 
     buf.extend_from_slice(&record.key.as_bytes());
     buf.extend_from_slice(&record.value.as_bytes());
     file.write_all(&buf)?;
-    file.flush()?;
+    file.sync_all()?;
     Ok(current_eof_offset)
 }

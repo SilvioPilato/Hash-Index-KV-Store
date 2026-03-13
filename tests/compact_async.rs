@@ -109,9 +109,9 @@ fn stats_show_write_blocked_during_compaction() {
 
     wait_for_server();
 
-    for i in 0..2000 {
+    for i in 0..200 {
         let key = format!("k{}", i);
-        let value = "x".repeat(1024);
+        let value = "x".repeat(10240);
         assert_eq!(send_command(&format!("WRITE {} {}", key, value)), "OK");
     }
 

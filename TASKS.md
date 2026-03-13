@@ -1,8 +1,8 @@
 # Open Tasks
 
-## #13 — `flush()` vs `sync_all()` for durability
+## #13 — Review sync strategy for write performance
 
-`append_record` calls `flush()` which only pushes data to the OS page cache. For actual on-disk durability, `sync_all()` (or `sync_data()`) is needed. This is a trade-off between write performance and crash safety.
+`append_record` currently calls `sync_all()` on every write, guaranteeing full on-disk durability but at the cost of write throughput (~5–20ms per fsync). Consider group commit, a configurable `sync` flag per write, or a periodic background sync (à la Redis `everysec`) once performance becomes a concern.
 
 ## #14 — Hardcoded port in integration tests
 
