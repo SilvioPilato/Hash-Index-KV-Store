@@ -35,12 +35,12 @@ Implement a **sorted string table** segment format alongside (or replacing) the 
 
 Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
+# Closed Tasks
+
+<!-- Move completed tasks here to keep a reference of what was done. -->
+
 ## #20 — Add agent config files and task backlog (#15–#19)
 
 PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/8
 
 Add `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.github/hooks/post-edit.json` to the repo so that AI coding agents follow project conventions. Also add tasks #15–#19 to `TASKS.md` as the next batch of planned work (CRC checksums, segment size limits, hint files, SSTables, Bloom filters) and a "Closed Tasks" section.
-
-# Closed Tasks
-
-<!-- Move completed tasks here to keep a reference of what was done. -->
