@@ -82,7 +82,10 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
 
     match parse_message(&request.concat()) {
         Command::Write(key, value) => {
-            log_verbose(format!("Parsed WRITE command: key='{}', value='{}'", key, value));
+            log_verbose(format!(
+                "Parsed WRITE command: key='{}', value='{}'",
+                key, value
+            ));
             if stats.compacting.load(Ordering::Relaxed) {
                 stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
             }
