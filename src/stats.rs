@@ -14,6 +14,12 @@ pub struct Stats {
     pub active_connections: AtomicI64,
 }
 
+impl Default for Stats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Stats {
     pub fn new() -> Stats {
         Stats {

@@ -166,7 +166,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
 }
 
 fn parse_message(message: &str) -> Command {
-    let words: Vec<&str> = message.trim().split_whitespace().collect();
+    let words: Vec<&str> = message.split_whitespace().collect();
 
     if words.is_empty() {
         return Command::Invalid(message.to_string());

@@ -39,6 +39,10 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
 
+## #21 — Fix clippy warnings
+
+Fix all clippy warnings (`cargo clippy -- -D warnings`): redundant field name, identity op, needless borrows, needless `Ok(?)`  wrapper, missing `Default` impl, `SeekFrom::Current(0)` → `stream_position()`, missing `truncate` on `OpenOptions::create`, redundant `trim()` before `split_whitespace()`.
+
 ## #20 — Add agent config files and task backlog (#15–#19)
 
 PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/8
