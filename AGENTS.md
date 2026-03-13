@@ -30,7 +30,8 @@ This is a didactic Bitcask-style key-value store built while reading *Designing 
 
 ## Code Style
 
-- Rust, built with Cargo. Source in `src/`, integration tests in `tests/`.
+- Rust, built with Cargo. Source in `src/`, tests in `tests/`.
+- **All tests go in the `tests/` directory** — do not use inline `#[cfg(test)]` modules in `src/`.
 - Prefer hand-rolled implementations over external crates when the goal is to learn the concept.
 - Follow existing patterns and module structure. New modules go in `src/`.
 - Keep implementations simple. Avoid over-engineering or premature abstraction.

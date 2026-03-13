@@ -99,6 +99,7 @@ impl DB {
         let mut file = self.db_file.try_clone()?;
         let record = Record {
             header: RecordHeader {
+                crc32: 0u32,
                 key_size: key.len() as u64,
                 value_size: value.len() as u64,
                 tombstone: false,
@@ -124,6 +125,7 @@ impl DB {
             Some(_) => {
                 let record = Record {
                     header: RecordHeader {
+                        crc32: 0u32,
                         key_size: key.len() as u64,
                         value_size: 0,
                         tombstone: true,
