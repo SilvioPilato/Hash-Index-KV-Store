@@ -37,6 +37,8 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 
 ## #15 — CRC checksums per record (DDIA Ch. 3)
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/10
+
 The record format currently has no integrity check. Bitcask stores a CRC with every record so that corrupted bytes are detected on read rather than silently returning garbage. Add a CRC32 field to the record header (4 bytes, computed over key+value+tombstone), verify it in `read_record`, and return an error on mismatch. This teaches **data integrity at the storage layer** — a topic DDIA revisits in Chapters 3, 5, and 7.
 
 ## #21 — Fix clippy warnings
