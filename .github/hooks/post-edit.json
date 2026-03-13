@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "cargo fmt",
+        "timeout": 30
+      },
+      {
+        "type": "command",
+        "command": "cargo clippy --quiet -- -D warnings",
+        "timeout": 60
+      }
+    ]
+  }
+}
