@@ -47,8 +47,8 @@ impl HashIndex {
         let file_size = file.seek(SeekFrom::End(0))?;
         file.seek(SeekFrom::Start(0))?;
 
-        while file.seek(SeekFrom::Current(0))? < file_size {
-            let record_offset = file.seek(SeekFrom::Current(0))?;
+        while file.stream_position()? < file_size {
+            let record_offset = file.stream_position()?;
             let record = read_record(file)?;
             let header = record.header;
 

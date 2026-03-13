@@ -53,5 +53,5 @@ pub fn get_segments(dir: &str, db_name: &str) -> io::Result<Vec<Segment>> {
 }
 
 pub fn get_last_segment(dir: &str, db_name: &str) -> io::Result<Option<Segment>> {
-    Ok(get_segments(&dir, &db_name)?.into_iter().last())
+    Ok(get_segments(dir, db_name)?.into_iter().last())
 }

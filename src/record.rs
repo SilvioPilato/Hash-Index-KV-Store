@@ -7,7 +7,7 @@ use std::{
 pub const SIZE_FIELD_LEN: usize = 8;
 const TOMBSTONE_LEN: usize = 1;
 pub const RECORD_HEADER_LEN: usize = SIZE_FIELD_LEN * 2 + TOMBSTONE_LEN;
-pub const MAX_KEY_SIZE: usize = 1_048_576 * 1;
+pub const MAX_KEY_SIZE: usize = 1_048_576;
 pub const MAX_VALUE_SIZE: usize = 1_048_576 * 5;
 /// The fixed-size header that precedes every key-value record on disk.
 ///
@@ -65,7 +65,7 @@ pub fn read_record(file: &mut impl Read) -> io::Result<Record> {
             file.read_exact(&mut v_buf)?;
 
             Ok(Record {
-                header: header,
+                header,
                 key: String::from_utf8(k_buf).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
                 value: String::from_utf8(v_buf)
                     .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
@@ -77,7 +77,7 @@ pub fn read_record(file: &mut impl Read) -> io::Result<Record> {
 
 pub fn read_record_at(file: &mut (impl Read + Seek), offset: u64) -> io::Result<Record> {
     file.seek(SeekFrom::Start(offset))?;
-    Ok(read_record(file)?)
+    read_record(file)
 }
 
 pub fn append_record(file: &mut File, record: &Record) -> io::Result<u64> {
@@ -89,8 +89,8 @@ pub fn append_record(file: &mut File, record: &Record) -> io::Result<u64> {
     buf.extend_from_slice(&record.header.key_size.to_be_bytes());
     buf.extend_from_slice(&record.header.value_size.to_be_bytes());
     buf.extend_from_slice(&[record.header.tombstone as u8]);
-    buf.extend_from_slice(&record.key.as_bytes());
-    buf.extend_from_slice(&record.value.as_bytes());
+    buf.extend_from_slice(record.key.as_bytes());
+    buf.extend_from_slice(record.value.as_bytes());
     file.write_all(&buf)?;
     file.sync_all()?;
     Ok(current_eof_offset)

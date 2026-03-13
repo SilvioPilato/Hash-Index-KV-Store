@@ -22,6 +22,7 @@ impl DB {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(segment.path(db_path))
             .unwrap();
 

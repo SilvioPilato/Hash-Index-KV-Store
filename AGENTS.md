@@ -31,12 +31,19 @@ This is a didactic Bitcask-style key-value store built while reading *Designing 
 ## Code Style
 
 - Rust, built with Cargo. Source in `src/`, integration tests in `tests/`.
-- Run `cargo fmt` after editing code — all code must be formatted.
-- Run `cargo clippy -- -D warnings` — treat all clippy warnings as errors.
-- Run `cargo test` before committing — all unit and integration tests must pass.
 - Prefer hand-rolled implementations over external crates when the goal is to learn the concept.
 - Follow existing patterns and module structure. New modules go in `src/`.
 - Keep implementations simple. Avoid over-engineering or premature abstraction.
+
+## Pre-commit Checklist
+
+Before every commit, run these commands **in order** and ensure each one passes:
+
+1. `cargo fmt` — all code must be formatted.
+2. `cargo clippy -- -D warnings` — **zero warnings allowed**. If clippy reports any warnings or errors, fix them before continuing.
+3. `cargo test` — all unit and integration tests must pass.
+
+Do **not** commit or open a PR until all three pass. If a step fails, fix the issue and re-run from that step.
 
 ## Project Structure
 
