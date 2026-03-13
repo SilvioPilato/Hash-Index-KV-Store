@@ -18,6 +18,7 @@ This is a didactic Bitcask-style key-value store built while reading *Designing 
 - PR body must include a line: `Opened via <agent>` (e.g. `Opened via Copilot`, `Opened via Claude`, `Opened via OpenCode`).
 - Keep PRs focused on a single task.
 - After opening a PR, add the PR link to the corresponding task in `TASKS.md`.
+- Before opening the PR, move the task from **Open Tasks** to **Closed Tasks** in `TASKS.md`.
 - After completing a task, always ask the user if they want to checkout back to `main`.
 
 ## Agent Role
