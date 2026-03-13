@@ -23,10 +23,10 @@ cargo run -- <db_directory> [options]
 
 ### Options
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-t`, `--tcp` | TCP address to listen on | `0.0.0.0:6666` |
-| `-n`, `--name` | Segment file name prefix | `segment` |
+| Flag           | Description               | Default         |
+| -------------- | ------------------------- | --------------- |
+| `-t`, `--tcp`  | TCP address to listen on  | `0.0.0.0:6666`  |
+| `-n`, `--name` | Segment file name prefix  | `segment`       |
 
 ### Examples
 
@@ -45,6 +45,8 @@ To run all tests (7 unit + 3 integration):
 ```sh
 cargo test
 ```
+
+The TCP server keeps its per-request debug logging off by default, so integration tests stay quiet. If you want the old connection and command logs while debugging, run the server with `KV_STORE_VERBOSE=1`.
 
 ## Commands
 
@@ -75,7 +77,8 @@ Each command should be sent on a new line, followed by an empty line to signify 
 1. Start the server: `cargo run -- /tmp/mydb`
 2. In another terminal, connect with `netcat`: `nc localhost 6666`
 3. Send commands (each followed by a blank line):
-```
+
+```text
 WRITE name Alice
 
 READ name

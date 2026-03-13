@@ -2,6 +2,7 @@ use hash_index::db::DB;
 use hash_index::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
 use hash_index::settings::Settings;
 use hash_index::stats::Stats;
+use std::env;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -19,6 +20,16 @@ enum Command {
     Stats,
 }
 
+fn verbose_logging_enabled() -> bool {
+    matches!(env::var("KV_STORE_VERBOSE"), Ok(value) if value == "1")
+}
+
+fn log_verbose(message: impl AsRef<str>) {
+    if verbose_logging_enabled() {
+        println!("{}", message.as_ref());
+    }
+}
+
 fn main() {
     let settings = Settings::get_from_args();
 
@@ -33,7 +44,7 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                println!("New connection: {}", stream.peer_addr().unwrap());
+                log_verbose(format!("New connection: {}", stream.peer_addr().unwrap()));
                 let shared_db = Arc::clone(&db_handle);
                 let shared_stats = Arc::clone(&stats);
                 thread::spawn(move || {
@@ -71,7 +82,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
 
     match parse_message(&request.concat()) {
         Command::Write(key, value) => {
-            println!("Parsed WRITE command: key='{}', value='{}'", key, value);
+            log_verbose(format!("Parsed WRITE command: key='{}', value='{}'", key, value));
             if stats.compacting.load(Ordering::Relaxed) {
                 stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
             }
@@ -91,7 +102,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
             }
         }
         Command::Read(key) => {
-            println!("Parsed READ command: key='{}'", key);
+            log_verbose(format!("Parsed READ command: key='{}'", key));
             let db = database.read().unwrap();
             stats.reads.fetch_add(1, Ordering::Relaxed);
             match db.get(&key) {
@@ -103,7 +114,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
             }
         }
         Command::Delete(key) => {
-            println!("Parsed DELETE command: key='{}'", key);
+            log_verbose(format!("Parsed DELETE command: key='{}'", key));
             let mut db = database.write().unwrap();
             match db.delete(&key) {
                 Ok(result) => match result {
@@ -117,7 +128,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
             }
         }
         Command::Compact => {
-            println!("Parsed COMPACT command");
+            log_verbose("Parsed COMPACT command");
             if stats
                 .compacting
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -145,7 +156,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
         }
         Command::Stats => stats.snapshot(),
         Command::Invalid(original_command) => {
-            println!("Invalid command: {}", original_command);
+            log_verbose(format!("Invalid command: {}", original_command));
             format!("Invalid command: {}", original_command)
         }
     }
