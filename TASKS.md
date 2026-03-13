@@ -8,10 +8,6 @@
 
 Integration tests bind to a hardcoded port (`6666`). If anything else is using that port, tests fail. A more robust approach would be to bind to port 0, have the server report the assigned port, and have tests read it back.
 
-## #15 — CRC checksums per record (DDIA Ch. 3)
-
-The record format currently has no integrity check. Bitcask stores a CRC with every record so that corrupted bytes are detected on read rather than silently returning garbage. Add a CRC32 field to the record header (4 bytes, computed over key+value+tombstone), verify it in `read_record`, and return an error on mismatch. This teaches **data integrity at the storage layer** — a topic DDIA revisits in Chapters 3, 5, and 7.
-
 ## #16 — Segment size limit + multi-segment reads (DDIA Ch. 3)
 
 The DB uses a single segment that grows forever. DDIA describes how Bitcask rolls to a new segment file once the active one hits a size threshold, and compaction merges old segments. The work:
@@ -38,6 +34,12 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #15 — CRC checksums per record (DDIA Ch. 3)
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/10
+
+The record format currently has no integrity check. Bitcask stores a CRC with every record so that corrupted bytes are detected on read rather than silently returning garbage. Add a CRC32 field to the record header (4 bytes, computed over key+value+tombstone), verify it in `read_record`, and return an error on mismatch. This teaches **data integrity at the storage layer** — a topic DDIA revisits in Chapters 3, 5, and 7.
 
 ## #21 — Fix clippy warnings
 
