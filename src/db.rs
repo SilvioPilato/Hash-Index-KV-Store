@@ -1,6 +1,5 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Error, Seek, SeekFrom};
-use std::sync::Mutex;
 
 use crate::hash_index::HashIndex;
 use crate::record::{
@@ -10,7 +9,7 @@ use crate::segment::{Segment, get_last_segment};
 
 pub struct DB {
     index: HashIndex,
-    db_file: Mutex<File>,
+    db_file: File,
     db_path: String,
     db_name: String,
 }
@@ -28,7 +27,7 @@ impl DB {
 
         DB {
             index: HashIndex::new(),
-            db_file: Mutex::new(file),
+            db_file: file,
             db_path: db_path.to_string(),
             db_name: db_name.to_string(),
         }
@@ -48,7 +47,7 @@ impl DB {
                     .open(segment.path(db_dir))?;
                 Ok(Some(DB {
                     index: HashIndex::from_file(&mut file)?,
-                    db_file: Mutex::new(file),
+                    db_file: file,
                     db_path: db_dir.to_string(),
                     db_name: db_name.to_string(),
                 }))
@@ -71,10 +70,10 @@ impl DB {
             Some(o) => *o,
             None => return Ok(None),
         };
-        let mut file = self.db_file.lock().unwrap();
+        let mut file = self.db_file.try_clone()?;
         file.seek(SeekFrom::Start(offset)).unwrap();
 
-        let record = read_record(&mut *file)?;
+        let record = read_record(&mut file)?;
 
         Ok(Some((record.key, record.value)))
     }
@@ -96,7 +95,7 @@ impl DB {
                 "key or value exceeds maximum allowed size",
             ));
         }
-        let mut file = self.db_file.lock().unwrap();
+        let mut file = self.db_file.try_clone()?;
         let record = Record {
             header: RecordHeader {
                 key_size: key.len() as u64,
@@ -106,7 +105,7 @@ impl DB {
             key: key.to_string(),
             value: value.to_string(),
         };
-        let offset = append_record(&mut *file, &record)?;
+        let offset = append_record(&mut file, &record)?;
         self.index.set(key.to_string(), offset);
 
         Ok(())
@@ -119,7 +118,7 @@ impl DB {
                 "key or value exceeds maximum allowed size",
             ));
         }
-        let mut file = self.db_file.lock().unwrap();
+        let mut file = self.db_file.try_clone()?;
         match self.index.delete(key) {
             Some(_) => {
                 let record = Record {
@@ -131,7 +130,7 @@ impl DB {
                     key: key.to_string(),
                     value: String::new(),
                 };
-                append_record(&mut *file, &record)?;
+                append_record(&mut file, &record)?;
                 Ok(Some(()))
             }
             None => Ok(None),
