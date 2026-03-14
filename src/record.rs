@@ -127,6 +127,5 @@ pub fn append_record(file: &mut File, record: &Record) -> io::Result<u64> {
     buf.extend_from_slice(&payload);
 
     file.write_all(&buf)?;
-    file.sync_all()?;
     Ok(current_eof_offset)
 }

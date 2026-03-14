@@ -1,9 +1,5 @@
 # Open Tasks
 
-## #13 — Review sync strategy for write performance
-
-`append_record` currently calls `sync_all()` on every write, guaranteeing full on-disk durability but at the cost of write throughput (~5–20ms per fsync). Consider group commit, a configurable `sync` flag per write, or a periodic background sync (à la Redis `everysec`) once performance becomes a concern.
-
 ## #14 — Hardcoded port in integration tests
 
 Integration tests bind to a hardcoded port (`6666`). If anything else is using that port, tests fail. A more robust approach would be to bind to port 0, have the server report the assigned port, and have tests read it back.
@@ -24,9 +20,19 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 
 `read_record`, `read_record_at`, and `append_record` are free functions in `record.rs`. Refactor them into methods on `Record` (`Record::read()`, `Record::read_at()`, `record.append()`) for a more idiomatic API. This will touch call sites in `db.rs`, `hash_index.rs`, and tests.
 
+## #23 — Background thread/timer infrastructure
+
+Several features need a background task that runs periodically: `Periodic` sync strategy (fsync every N seconds, à la Redis `everysec`), automatic compaction triggers, and potentially future housekeeping. Build a simple background worker that the `DB` owns — a spawned thread with a configurable tick interval that can run scheduled jobs (sync, compaction check, etc.) and shuts down cleanly when the `DB` is dropped. This is a shared prerequisite for periodic sync (#13) and automatic compaction.
+
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #13 — Review sync strategy for write performance
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/12
+
+`append_record` no longer calls `sync_all()` on every write. Durability is now controlled by a configurable `FSyncStrategy` enum (`Always`, `EveryN(n)`, `Never`) passed to `DB::new` / `DB::from_dir` and settable via `--fsync-interval` CLI flag. `Always` preserves the original behavior (default). Compaction unconditionally fsyncs before deleting old segments.
 
 ## #16 — Segment size limit + multi-segment reads (DDIA Ch. 3)
 

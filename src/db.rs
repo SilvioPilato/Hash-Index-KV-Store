@@ -6,6 +6,7 @@ use crate::record::{
     MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader, append_record, read_record,
 };
 use crate::segment::{Segment, get_segments};
+use crate::settings::FSyncStrategy;
 
 pub struct DB {
     index: HashIndex,
@@ -14,10 +15,17 @@ pub struct DB {
     db_name: String,
     active_segment: Segment,
     max_segment_bytes: u64,
+    writes_since_fsync: u64,
+    fsync_strategy: FSyncStrategy,
 }
 
 impl DB {
-    pub fn new(db_path: &str, db_name: &str, max_segment_bytes: u64) -> DB {
+    pub fn new(
+        db_path: &str,
+        db_name: &str,
+        max_segment_bytes: u64,
+        fsync_strategy: FSyncStrategy,
+    ) -> DB {
         std::fs::create_dir_all(db_path).unwrap();
         let segment = Segment::new(db_name).unwrap();
         let file: File = OpenOptions::new()
@@ -35,6 +43,8 @@ impl DB {
             db_name: db_name.to_string(),
             active_segment: segment,
             max_segment_bytes,
+            writes_since_fsync: 0,
+            fsync_strategy,
         }
     }
 
@@ -42,6 +52,7 @@ impl DB {
         db_dir: &str,
         db_name: &str,
         max_segment_bytes: u64,
+        fsync_strategy: FSyncStrategy,
     ) -> Result<Option<DB>, Error> {
         let segments = match get_segments(db_dir, db_name) {
             Ok(s) => s,
@@ -76,6 +87,8 @@ impl DB {
                 timestamp: active_segment.unwrap().timestamp,
             },
             max_segment_bytes,
+            writes_since_fsync: 0,
+            fsync_strategy,
         }))
     }
 
@@ -148,6 +161,7 @@ impl DB {
         let offset = append_record(&mut file, &record)?;
         self.index
             .set(key.to_string(), offset, self.active_segment.timestamp);
+        self.fsync()?;
 
         Ok(())
     }
@@ -173,6 +187,7 @@ impl DB {
                     value: String::new(),
                 };
                 append_record(&mut file, &record)?;
+                self.fsync()?;
                 Ok(Some(()))
             }
             None => Ok(None),
@@ -181,7 +196,12 @@ impl DB {
 
     pub fn get_compacted(&self) -> Result<DB, Error> {
         let old_segments = get_segments(&self.db_path, &self.db_name)?;
-        let mut new_db = DB::new(&self.db_path, &self.db_name, self.max_segment_bytes);
+        let mut new_db = DB::new(
+            &self.db_path,
+            &self.db_name,
+            self.max_segment_bytes,
+            self.fsync_strategy,
+        );
 
         let keys: Vec<String> = self.index.ls_keys().cloned().collect();
         for k in keys {
@@ -191,6 +211,7 @@ impl DB {
             };
             new_db.set(&k, &value)?;
         }
+        new_db.active_file.sync_all()?;
 
         for segment in &old_segments {
             fs::remove_file(segment.path(&self.db_path))?;
@@ -209,6 +230,25 @@ impl DB {
             .open(segment.path(&self.db_path))?;
         self.active_file = file;
         self.active_segment = segment;
+        Ok(())
+    }
+
+    fn fsync(&mut self) -> io::Result<()> {
+        self.writes_since_fsync += 1;
+        match self.fsync_strategy {
+            FSyncStrategy::Always => {
+                self.writes_since_fsync = 0;
+                self.active_file.sync_all()?
+            }
+            FSyncStrategy::Never => {}
+            FSyncStrategy::EveryN(n) => {
+                if n <= self.writes_since_fsync as usize {
+                    self.writes_since_fsync = 0;
+                    self.active_file.sync_all()?
+                }
+            }
+        }
+
         Ok(())
     }
 }
