@@ -1,6 +1,7 @@
 pub mod crc;
 pub mod db;
 pub mod hash_index;
+pub mod hint;
 pub mod record;
 pub mod segment;
 pub mod settings;

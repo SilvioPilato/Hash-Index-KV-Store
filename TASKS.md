@@ -4,10 +4,6 @@
 
 Integration tests bind to a hardcoded port (`6666`). If anything else is using that port, tests fail. A more robust approach would be to bind to port 0, have the server report the assigned port, and have tests read it back.
 
-## #17 — Hint files for fast startup (DDIA Ch. 3, Bitcask paper)
-
-On startup, `HashIndex::from_file` does a full sequential scan of every record to rebuild the index. Bitcask solves this with **hint files** — a sidecar file containing only `(key, offset, tombstone)` tuples, written during compaction. On restart, loading the hint file is much faster since you skip all value bytes. This teaches the trade-off between **write amplification and recovery time**.
-
 ## #18 — Simple SSTable / sorted segments (DDIA Ch. 3)
 
 Implement a **sorted string table** segment format alongside (or replacing) the current hash-indexed one. Writes go to an in-memory balanced tree (memtable); when it reaches a size threshold it's flushed as a sorted segment file. Reads check the memtable first, then segments newest-to-oldest. This is the foundation of LSM-Trees (LevelDB, RocksDB) and the second major storage engine architecture in DDIA Ch. 3. Start minimal — a single sorted segment flush + merge — and layer on a Bloom filter (#19) later.
@@ -34,6 +30,12 @@ Apply idiomatic Rust improvements across the codebase (sources: Rust API Guideli
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #17 — Hint files for fast startup (DDIA Ch. 3, Bitcask paper)
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/14
+
+Added hint files — sidecar `.hint` files written during compaction containing `(key_size, offset, tombstone, key)` tuples. On startup, `from_dir` loads the index from hint files when available (skipping value bytes), falling back to full record scan when no hint exists. Compaction writes one hint file per new segment and cleans up old hint files alongside old segments.
 
 ## #22 — Move Record free functions into impl block
 

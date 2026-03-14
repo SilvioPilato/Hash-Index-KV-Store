@@ -2,6 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, Seek, SeekFrom};
 
 use crate::hash_index::HashIndex;
+use crate::hint::{Hint, HintEntry};
 use crate::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader};
 use crate::segment::{Segment, get_segments};
 use crate::settings::FSyncStrategy;
@@ -71,7 +72,19 @@ impl DB {
                 .read(true)
                 .write(true)
                 .open(segment.path(db_dir))?;
-            hash_index.merge_from_file(&mut file, segment.timestamp)?;
+
+            match Hint::read_file(segment.hint_path(db_dir)) {
+                Ok(hints) => {
+                    hints.iter().for_each(|entry| {
+                        if !entry.tombstone {
+                            hash_index.set(entry.key.clone(), entry.offset, segment.timestamp);
+                        }
+                    });
+                }
+                Err(_) => {
+                    hash_index.merge_from_file(&mut file, segment.timestamp)?;
+                }
+            }
             current_file = Some(file);
             active_segment = Some(segment);
         }
@@ -209,10 +222,34 @@ impl DB {
             };
             new_db.set(&k, &value)?;
         }
+
         new_db.active_file.sync_all()?;
 
         for segment in &old_segments {
             fs::remove_file(segment.path(&self.db_path))?;
+            let _ = fs::remove_file(segment.hint_path(&self.db_path));
+        }
+
+        let new_segments = get_segments(&self.db_path, &self.db_name)?;
+        for segment in &new_segments {
+            let hint_entries: Vec<HintEntry> = new_db
+                .index
+                .ls_keys()
+                .filter_map(|k| {
+                    let entry = new_db.index.get(k).unwrap();
+                    if entry.segment_timestamp == segment.timestamp {
+                        Some(HintEntry {
+                            key_size: k.len() as u64,
+                            offset: entry.offset,
+                            tombstone: false,
+                            key: k.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Hint::write_file(segment.hint_path(&self.db_path), &hint_entries)?;
         }
 
         Ok(new_db)
