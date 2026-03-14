@@ -20,8 +20,16 @@ impl Segment {
         format!("{}_{}.db", self.segment_name, self.timestamp)
     }
 
+    pub fn hint_filename(&self) -> String {
+        format!("{}_{}.hint", self.segment_name, self.timestamp)
+    }
+
     pub fn path(&self, dir: &str) -> PathBuf {
         PathBuf::from(dir).join(self.filename())
+    }
+
+    pub fn hint_path(&self, dir: &str) -> PathBuf {
+        PathBuf::from(dir).join(self.hint_filename())
     }
 
     pub fn parse(filename: &str) -> Option<Self> {

@@ -7,7 +7,7 @@ use std::{
 use crate::crc::crc32;
 
 pub const SIZE_FIELD_LEN: usize = 8;
-const TOMBSTONE_LEN: usize = 1;
+pub const TOMBSTONE_LEN: usize = 1;
 pub const RECORD_HEADER_LEN: usize = CRC_LEN + SIZE_FIELD_LEN * 2 + TOMBSTONE_LEN;
 pub const MAX_KEY_SIZE: usize = 1_048_576;
 pub const MAX_VALUE_SIZE: usize = 1_048_576 * 5;
