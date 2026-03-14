@@ -14,18 +14,36 @@ pub const MAX_VALUE_SIZE: usize = 1_048_576 * 5;
 pub const CRC_LEN: usize = 4;
 /// The fixed-size header that precedes every key-value record on disk.
 ///
-/// Layout: `|key_size (8 bytes BE u64)|value_size (8 bytes BE u64)|`
+/// Layout (21 bytes, all integers big-endian):
+///
+/// ```text
+/// | crc32 (4 B) | key_size (8 B) | value_size (8 B) | tombstone (1 B) |
+/// ```
+///
+/// The CRC32 is computed over everything *after* the CRC field:
+/// `key_size || value_size || tombstone || key || value`.
 #[derive(Debug)]
 pub struct RecordHeader {
+    /// CRC32 checksum (IEEE polynomial) for integrity verification.
     pub crc32: u32,
     /// Length of the key in bytes.
     pub key_size: u64,
     /// Length of the value in bytes.
     pub value_size: u64,
+    /// If `true`, this record marks a deletion (value is empty).
     pub tombstone: bool,
 }
 
-/// A complete key-value record: the fixed-size header followed by the key and value payloads.
+/// A complete key-value record as stored in a segment file.
+///
+/// On-disk layout:
+///
+/// ```text
+/// | RecordHeader (21 B) | key (key_size B) | value (value_size B) |
+/// ```
+///
+/// Use [`Record::append`] to write a record to a segment file,
+/// and [`Record::read_next`] / [`Record::read_record_at`] to read one back.
 #[derive(Debug)]
 pub struct Record {
     pub header: RecordHeader,
@@ -34,10 +52,14 @@ pub struct Record {
 }
 
 impl Record {
+    /// Returns the total number of bytes this record occupies on disk
+    /// (header + key + value).
     pub fn size_on_disk(&self) -> u64 {
         RECORD_HEADER_LEN as u64 + self.header.key_size + self.header.value_size
     }
 
+    /// Appends this record to the end of `file`, computing a fresh CRC32
+    /// over the payload. Returns the byte offset where the record starts.
     pub fn append(&self, file: &mut File) -> io::Result<u64> {
         let current_eof_offset = file.seek(SeekFrom::End(0))?;
         let mut buf = Vec::with_capacity(
@@ -61,6 +83,10 @@ impl Record {
         Ok(current_eof_offset)
     }
 
+    /// Reads a [`RecordHeader`] from the current position of the given reader.
+    ///
+    /// Consumes exactly [`RECORD_HEADER_LEN`] bytes and leaves the reader
+    /// positioned at the first byte of the key payload.
     pub fn read_header(file: &mut impl Read) -> io::Result<RecordHeader> {
         let mut c32_buf = [0u8; CRC_LEN];
         let mut k_buf = [0u8; SIZE_FIELD_LEN];
@@ -78,11 +104,17 @@ impl Record {
         })
     }
 
+    /// Seeks to `offset` and reads a full record (header + key + value).
     pub fn read_record_at(file: &mut (impl Read + Seek), offset: u64) -> io::Result<Record> {
         file.seek(SeekFrom::Start(offset))?;
         Record::read_next(file)
     }
 
+    /// Reads the next record from the current position of the reader.
+    ///
+    /// Parses the header, reads the key and value bytes, then verifies the
+    /// CRC32 checksum. Returns [`ErrorKind::InvalidData`] on CRC mismatch
+    /// or invalid UTF-8.
     pub fn read_next(file: &mut impl Read) -> io::Result<Record> {
         match Record::read_header(file) {
             Ok(header) => {

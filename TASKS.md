@@ -26,6 +26,8 @@ Several features need a background task that runs periodically: `Periodic` sync 
 
 ## #22 — Move Record free functions into impl block
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/13
+
 Refactored `read_record`, `read_record_at`, and `append_record` from free functions in `record.rs` into methods on `Record`: `Record::read_next()`, `Record::read_record_at()`, `record.append()`. Updated all call sites in `db.rs`, `hash_index.rs`, and `tests/crc.rs`.
 
 ## #13 — Review sync strategy for write performance
