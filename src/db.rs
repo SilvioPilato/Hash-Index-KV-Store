@@ -1,21 +1,23 @@
-use std::fs::{File, OpenOptions};
-use std::io::{Error, Seek, SeekFrom};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Error, Seek, SeekFrom};
 
 use crate::hash_index::HashIndex;
 use crate::record::{
     MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader, append_record, read_record,
 };
-use crate::segment::{Segment, get_last_segment};
+use crate::segment::{Segment, get_segments};
 
 pub struct DB {
     index: HashIndex,
-    db_file: File,
+    active_file: File,
     db_path: String,
     db_name: String,
+    active_segment: Segment,
+    max_segment_bytes: u64,
 }
 
 impl DB {
-    pub fn new(db_path: &str, db_name: &str) -> DB {
+    pub fn new(db_path: &str, db_name: &str, max_segment_bytes: u64) -> DB {
         std::fs::create_dir_all(db_path).unwrap();
         let segment = Segment::new(db_name).unwrap();
         let file: File = OpenOptions::new()
@@ -28,33 +30,53 @@ impl DB {
 
         DB {
             index: HashIndex::new(),
-            db_file: file,
+            active_file: file,
             db_path: db_path.to_string(),
             db_name: db_name.to_string(),
+            active_segment: segment,
+            max_segment_bytes,
         }
     }
 
-    pub fn from_dir(db_dir: &str, db_name: &str) -> Result<Option<DB>, Error> {
-        let segment = match get_last_segment(db_dir, db_name) {
+    pub fn from_dir(
+        db_dir: &str,
+        db_name: &str,
+        max_segment_bytes: u64,
+    ) -> Result<Option<DB>, Error> {
+        let segments = match get_segments(db_dir, db_name) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        match segment {
-            Some(segment) => {
-                let mut file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(segment.path(db_dir))?;
-                Ok(Some(DB {
-                    index: HashIndex::from_file(&mut file)?,
-                    db_file: file,
-                    db_path: db_dir.to_string(),
-                    db_name: db_name.to_string(),
-                }))
-            }
-            None => Ok(None),
+
+        if segments.is_empty() {
+            return Ok(None);
         }
+
+        let mut hash_index = HashIndex::new();
+        let mut current_file = None;
+        let mut active_segment = None;
+
+        for segment in segments.iter() {
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(segment.path(db_dir))?;
+            hash_index.merge_from_file(&mut file, segment.timestamp)?;
+            current_file = Some(file);
+            active_segment = Some(segment);
+        }
+        Ok(Some(DB {
+            index: hash_index,
+            active_file: current_file.unwrap(),
+            db_path: db_dir.to_string(),
+            db_name: db_name.to_string(),
+            active_segment: Segment {
+                segment_name: active_segment.unwrap().segment_name.clone(),
+                timestamp: active_segment.unwrap().timestamp,
+            },
+            max_segment_bytes,
+        }))
     }
 
     /// Retrieves the value associated with the given key.
@@ -67,12 +89,22 @@ impl DB {
     /// Returns `None` if the key is not in the index or if the stored bytes
     /// are not valid UTF-8.
     pub fn get(&self, key: &str) -> Result<Option<(String, String)>, Error> {
-        let offset = match self.index.get(key) {
-            Some(o) => *o,
+        let entry = match self.index.get(key) {
+            Some(o) => o,
             None => return Ok(None),
         };
-        let mut file = self.db_file.try_clone()?;
-        file.seek(SeekFrom::Start(offset)).unwrap();
+
+        let mut file = if entry.segment_timestamp == self.active_segment.timestamp {
+            self.active_file.try_clone()?
+        } else {
+            let segment = Segment {
+                segment_name: self.db_name.clone(),
+                timestamp: entry.segment_timestamp,
+            };
+            File::open(segment.path(&self.db_path))?
+        };
+
+        file.seek(SeekFrom::Start(entry.offset)).unwrap();
 
         let record = read_record(&mut file)?;
 
@@ -96,7 +128,6 @@ impl DB {
                 "key or value exceeds maximum allowed size",
             ));
         }
-        let mut file = self.db_file.try_clone()?;
         let record = Record {
             header: RecordHeader {
                 crc32: 0u32,
@@ -107,8 +138,16 @@ impl DB {
             key: key.to_string(),
             value: value.to_string(),
         };
+
+        let seg_size = self.active_file.seek(SeekFrom::End(0))?;
+
+        if self.max_segment_bytes < seg_size + record.size_on_disk() {
+            self.roll_segment()?;
+        }
+        let mut file = self.active_file.try_clone()?;
         let offset = append_record(&mut file, &record)?;
-        self.index.set(key.to_string(), offset);
+        self.index
+            .set(key.to_string(), offset, self.active_segment.timestamp);
 
         Ok(())
     }
@@ -120,7 +159,7 @@ impl DB {
                 "key or value exceeds maximum allowed size",
             ));
         }
-        let mut file = self.db_file.try_clone()?;
+        let mut file = self.active_file.try_clone()?;
         match self.index.delete(key) {
             Some(_) => {
                 let record = Record {
@@ -141,7 +180,8 @@ impl DB {
     }
 
     pub fn get_compacted(&self) -> Result<DB, Error> {
-        let mut new_db = DB::new(&self.db_path, &self.db_name);
+        let old_segments = get_segments(&self.db_path, &self.db_name)?;
+        let mut new_db = DB::new(&self.db_path, &self.db_name, self.max_segment_bytes);
 
         let keys: Vec<String> = self.index.ls_keys().cloned().collect();
         for k in keys {
@@ -152,6 +192,23 @@ impl DB {
             new_db.set(&k, &value)?;
         }
 
+        for segment in &old_segments {
+            fs::remove_file(segment.path(&self.db_path))?;
+        }
+
         Ok(new_db)
+    }
+
+    fn roll_segment(&mut self) -> io::Result<()> {
+        let segment = Segment::new(&self.db_name).unwrap();
+        let file: File = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(segment.path(&self.db_path))?;
+        self.active_file = file;
+        self.active_segment = segment;
+        Ok(())
     }
 }

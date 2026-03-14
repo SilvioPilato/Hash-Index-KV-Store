@@ -8,17 +8,6 @@
 
 Integration tests bind to a hardcoded port (`6666`). If anything else is using that port, tests fail. A more robust approach would be to bind to port 0, have the server report the assigned port, and have tests read it back.
 
-## #16 — Segment size limit + multi-segment reads (DDIA Ch. 3)
-
-The DB uses a single segment that grows forever. DDIA describes how Bitcask rolls to a new segment file once the active one hits a size threshold, and compaction merges old segments. The work:
-
-- Add a `max_segment_bytes` setting.
-- When `append_record` would exceed the limit, close the current segment and open a new one.
-- On read, if a key's offset refers to an older segment, open that file.
-- Compaction merges all segments into one fresh segment.
-
-This is the natural continuation of the existing segment infrastructure and teaches **log-structured storage lifecycle**.
-
 ## #17 — Hint files for fast startup (DDIA Ch. 3, Bitcask paper)
 
 On startup, `HashIndex::from_file` does a full sequential scan of every record to rebuild the index. Bitcask solves this with **hint files** — a sidecar file containing only `(key, offset, tombstone)` tuples, written during compaction. On restart, loading the hint file is much faster since you skip all value bytes. This teaches the trade-off between **write amplification and recovery time**.
@@ -31,9 +20,26 @@ Implement a **sorted string table** segment format alongside (or replacing) the 
 
 Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
+## #22 — Move Record free functions into impl block
+
+`read_record`, `read_record_at`, and `append_record` are free functions in `record.rs`. Refactor them into methods on `Record` (`Record::read()`, `Record::read_at()`, `record.append()`) for a more idiomatic API. This will touch call sites in `db.rs`, `hash_index.rs`, and tests.
+
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #16 — Segment size limit + multi-segment reads (DDIA Ch. 3)
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/11
+
+The DB uses a single segment that grows forever. DDIA describes how Bitcask rolls to a new segment file once the active one hits a size threshold, and compaction merges old segments. The work:
+
+- Add a `max_segment_bytes` setting.
+- When `append_record` would exceed the limit, close the current segment and open a new one.
+- On read, if a key's offset refers to an older segment, open that file.
+- Compaction merges all segments into one fresh segment.
+
+This is the natural continuation of the existing segment infrastructure and teaches **log-structured storage lifecycle**.
 
 ## #15 — CRC checksums per record (DDIA Ch. 3)
 

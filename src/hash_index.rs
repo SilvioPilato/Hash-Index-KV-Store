@@ -8,7 +8,12 @@ use crate::record::read_record;
 
 /// In-memory index mapping keys to their byte offsets in the database file.
 pub struct HashIndex {
-    hashmap: HashMap<String, u64>,
+    hashmap: HashMap<String, IndexEntry>,
+}
+
+pub struct IndexEntry {
+    pub segment_timestamp: u64,
+    pub offset: u64,
 }
 
 impl HashIndex {
@@ -20,35 +25,39 @@ impl HashIndex {
     }
 
     /// Returns the byte offset for the given key, or `None` if it is not present.
-    pub fn get(&self, key: &str) -> Option<&u64> {
+    pub fn get(&self, key: &str) -> Option<&IndexEntry> {
         self.hashmap.get(key)
     }
 
     /// Inserts or updates the byte offset for the given key.
-    pub fn set(&mut self, key: String, location: u64) {
-        self.hashmap.insert(key, location);
+    pub fn set(&mut self, key: String, file_location: u64, segment_timestamp: u64) {
+        let entry = IndexEntry {
+            segment_timestamp,
+            offset: file_location,
+        };
+        self.hashmap.insert(key, entry);
     }
 
     /// Returns an iterator over all keys in the index.
-    pub fn ls_keys(&self) -> std::collections::hash_map::Keys<'_, String, u64> {
+    pub fn ls_keys(&self) -> std::collections::hash_map::Keys<'_, String, IndexEntry> {
         self.hashmap.keys()
     }
 
     /// Removes a key from the index, returning its byte offset if it was present.
-    pub fn delete(&mut self, key: &str) -> Option<u64> {
+    pub fn delete(&mut self, key: &str) -> Option<IndexEntry> {
         self.hashmap.remove(key)
     }
 
     /// Rebuilds the index by sequentially scanning all records in the given
     /// database file. Tombstoned records are skipped. For duplicate keys,
     /// the last occurrence wins.
-    pub fn from_file(file: &mut File) -> Result<HashIndex, Error> {
+    pub fn from_file(file: &mut File, segment_timestamp: u64) -> Result<HashIndex, Error> {
         let mut hashmap = HashMap::new();
         let file_size = file.seek(SeekFrom::End(0))?;
         file.seek(SeekFrom::Start(0))?;
 
         while file.stream_position()? < file_size {
-            let record_offset = file.stream_position()?;
+            let offset = file.stream_position()?;
             let record = read_record(file)?;
             let header = record.header;
 
@@ -57,9 +66,40 @@ impl HashIndex {
                 continue;
             }
             let key = record.key;
-            hashmap.insert(key, record_offset);
+            let entry = IndexEntry {
+                segment_timestamp,
+                offset,
+            };
+            hashmap.insert(key, entry);
         }
 
         Ok(HashIndex { hashmap })
+    }
+
+    pub fn merge_from_file(
+        &mut self,
+        file: &mut File,
+        segment_timestamp: u64,
+    ) -> Result<(), Error> {
+        let file_size = file.seek(SeekFrom::End(0))?;
+        file.seek(SeekFrom::Start(0))?;
+
+        while file.stream_position()? < file_size {
+            let offset = file.stream_position()?;
+            let record = read_record(file)?;
+            let header = record.header;
+
+            if header.tombstone {
+                self.hashmap.remove(&record.key);
+                continue;
+            }
+            let key = record.key;
+            let entry = IndexEntry {
+                segment_timestamp,
+                offset,
+            };
+            self.hashmap.insert(key, entry);
+        }
+        Ok(())
     }
 }
