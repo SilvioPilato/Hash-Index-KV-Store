@@ -30,6 +30,8 @@ Several features need a background task that runs periodically: `Periodic` sync 
 
 ## #13 — Review sync strategy for write performance
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/12
+
 `append_record` no longer calls `sync_all()` on every write. Durability is now controlled by a configurable `FSyncStrategy` enum (`Always`, `EveryN(n)`, `Never`) passed to `DB::new` / `DB::from_dir` and settable via `--fsync-interval` CLI flag. `Always` preserves the original behavior (default). Compaction unconditionally fsyncs before deleting old segments.
 
 ## #16 — Segment size limit + multi-segment reads (DDIA Ch. 3)
