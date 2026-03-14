@@ -1,5 +1,5 @@
 use hash_index::crc::crc32;
-use hash_index::record::{Record, RecordHeader, append_record, read_record};
+use hash_index::record::{Record, RecordHeader};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -41,10 +41,10 @@ fn valid_record_roundtrip() {
         key: "hello".to_string(),
         value: "world".to_string(),
     };
-    append_record(&mut file, &record).unwrap();
+    record.append(&mut file).unwrap();
 
     file.seek(SeekFrom::Start(0)).unwrap();
-    let read_back = read_record(&mut file).unwrap();
+    let read_back = Record::read_next(&mut file).unwrap();
     assert_eq!(read_back.key, "hello");
     assert_eq!(read_back.value, "world");
 }
@@ -62,7 +62,7 @@ fn corrupted_value_detected() {
         key: "hello".to_string(),
         value: "world".to_string(),
     };
-    append_record(&mut file, &record).unwrap();
+    record.append(&mut file).unwrap();
 
     // Flip a byte in the value region (last byte of the file)
     let file_len = file.seek(SeekFrom::End(0)).unwrap();
@@ -76,7 +76,7 @@ fn corrupted_value_detected() {
 
     // Re-open and try to read — should fail with InvalidData
     let mut file = File::open(&path).unwrap();
-    let err = read_record(&mut file).unwrap_err();
+    let err = Record::read_next(&mut file).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("CRC mismatch"));
 }
@@ -94,7 +94,7 @@ fn corrupted_header_detected() {
         key: "hello".to_string(),
         value: "world".to_string(),
     };
-    append_record(&mut file, &record).unwrap();
+    record.append(&mut file).unwrap();
 
     // Flip a byte in the tombstone field (byte at offset CRC_LEN + 16 = 20)
     let tombstone_offset = 20u64;
@@ -107,7 +107,7 @@ fn corrupted_header_detected() {
     file.sync_all().unwrap();
 
     let mut file = File::open(&path).unwrap();
-    let err = read_record(&mut file).unwrap_err();
+    let err = Record::read_next(&mut file).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("CRC mismatch"));
 }

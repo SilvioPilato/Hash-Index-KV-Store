@@ -37,95 +37,91 @@ impl Record {
     pub fn size_on_disk(&self) -> u64 {
         RECORD_HEADER_LEN as u64 + self.header.key_size + self.header.value_size
     }
-}
 
-/// Reads a [`RecordHeader`] from the current position of the given reader.
-///
-/// Consumes exactly 16 bytes (two big-endian `u64` values) and returns
-/// the parsed key and value sizes. The reader is left positioned at the
-/// first byte of the key payload.
-pub fn read_record_header(file: &mut impl Read) -> io::Result<RecordHeader> {
-    let mut c32_buf = [0u8; CRC_LEN];
-    let mut k_buf = [0u8; SIZE_FIELD_LEN];
-    let mut v_buf = [0u8; SIZE_FIELD_LEN];
-    let mut t_buf = [0u8; TOMBSTONE_LEN];
-    file.read_exact(&mut c32_buf)?;
-    file.read_exact(&mut k_buf)?;
-    file.read_exact(&mut v_buf)?;
-    file.read_exact(&mut t_buf)?;
-    Ok(RecordHeader {
-        crc32: u32::from_be_bytes(c32_buf),
-        key_size: u64::from_be_bytes(k_buf),
-        value_size: u64::from_be_bytes(v_buf),
-        tombstone: t_buf[0] != 0,
-    })
-}
+    pub fn append(&self, file: &mut File) -> io::Result<u64> {
+        let current_eof_offset = file.seek(SeekFrom::End(0))?;
+        let mut buf = Vec::with_capacity(
+            RECORD_HEADER_LEN + self.header.key_size as usize + self.header.value_size as usize,
+        );
+        let mut payload = Vec::with_capacity(
+            RECORD_HEADER_LEN - CRC_LEN
+                + self.header.key_size as usize
+                + self.header.value_size as usize,
+        );
+        payload.extend_from_slice(&self.header.key_size.to_be_bytes());
+        payload.extend_from_slice(&self.header.value_size.to_be_bytes());
+        payload.extend_from_slice(&[self.header.tombstone as u8]);
+        payload.extend_from_slice(self.key.as_bytes());
+        payload.extend_from_slice(self.value.as_bytes());
 
-pub fn read_record(file: &mut impl Read) -> io::Result<Record> {
-    match read_record_header(file) {
-        Ok(header) => {
-            if header.key_size as usize > MAX_KEY_SIZE
-                || header.value_size as usize > MAX_VALUE_SIZE
-            {
-                return Err(Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "key or value exceeds maximum allowed size",
-                ));
-            }
+        buf.extend_from_slice(&crc32(&payload).to_be_bytes());
+        buf.extend_from_slice(&payload);
 
-            let mut k_buf = vec![0u8; header.key_size as usize];
-            let mut v_buf: Vec<u8> = vec![0u8; header.value_size as usize];
-            file.read_exact(&mut k_buf)?;
-            file.read_exact(&mut v_buf)?;
-
-            let mut payload =
-                Vec::with_capacity(header.key_size as usize + header.value_size as usize);
-            payload.extend_from_slice(&header.key_size.to_be_bytes());
-            payload.extend_from_slice(&header.value_size.to_be_bytes());
-            payload.extend_from_slice(&[header.tombstone as u8]);
-            payload.extend_from_slice(&k_buf);
-            payload.extend_from_slice(&v_buf);
-            let crc32 = crc32(&payload);
-
-            if crc32 != header.crc32 {
-                return Err(Error::new(std::io::ErrorKind::InvalidData, "CRC mismatch"));
-            }
-
-            Ok(Record {
-                header,
-                key: String::from_utf8(k_buf).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
-                value: String::from_utf8(v_buf)
-                    .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
-            })
-        }
-        Err(err) => Err(err),
+        file.write_all(&buf)?;
+        Ok(current_eof_offset)
     }
-}
 
-pub fn read_record_at(file: &mut (impl Read + Seek), offset: u64) -> io::Result<Record> {
-    file.seek(SeekFrom::Start(offset))?;
-    read_record(file)
-}
+    pub fn read_header(file: &mut impl Read) -> io::Result<RecordHeader> {
+        let mut c32_buf = [0u8; CRC_LEN];
+        let mut k_buf = [0u8; SIZE_FIELD_LEN];
+        let mut v_buf = [0u8; SIZE_FIELD_LEN];
+        let mut t_buf = [0u8; TOMBSTONE_LEN];
+        file.read_exact(&mut c32_buf)?;
+        file.read_exact(&mut k_buf)?;
+        file.read_exact(&mut v_buf)?;
+        file.read_exact(&mut t_buf)?;
+        Ok(RecordHeader {
+            crc32: u32::from_be_bytes(c32_buf),
+            key_size: u64::from_be_bytes(k_buf),
+            value_size: u64::from_be_bytes(v_buf),
+            tombstone: t_buf[0] != 0,
+        })
+    }
 
-pub fn append_record(file: &mut File, record: &Record) -> io::Result<u64> {
-    let current_eof_offset = file.seek(SeekFrom::End(0))?;
-    let mut buf = Vec::with_capacity(
-        RECORD_HEADER_LEN + record.header.key_size as usize + record.header.value_size as usize,
-    );
-    let mut payload = Vec::with_capacity(
-        RECORD_HEADER_LEN - CRC_LEN
-            + record.header.key_size as usize
-            + record.header.value_size as usize,
-    );
-    payload.extend_from_slice(&record.header.key_size.to_be_bytes());
-    payload.extend_from_slice(&record.header.value_size.to_be_bytes());
-    payload.extend_from_slice(&[record.header.tombstone as u8]);
-    payload.extend_from_slice(record.key.as_bytes());
-    payload.extend_from_slice(record.value.as_bytes());
+    pub fn read_record_at(file: &mut (impl Read + Seek), offset: u64) -> io::Result<Record> {
+        file.seek(SeekFrom::Start(offset))?;
+        Record::read_next(file)
+    }
 
-    buf.extend_from_slice(&crc32(&payload).to_be_bytes());
-    buf.extend_from_slice(&payload);
+    pub fn read_next(file: &mut impl Read) -> io::Result<Record> {
+        match Record::read_header(file) {
+            Ok(header) => {
+                if header.key_size as usize > MAX_KEY_SIZE
+                    || header.value_size as usize > MAX_VALUE_SIZE
+                {
+                    return Err(Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "key or value exceeds maximum allowed size",
+                    ));
+                }
 
-    file.write_all(&buf)?;
-    Ok(current_eof_offset)
+                let mut k_buf = vec![0u8; header.key_size as usize];
+                let mut v_buf: Vec<u8> = vec![0u8; header.value_size as usize];
+                file.read_exact(&mut k_buf)?;
+                file.read_exact(&mut v_buf)?;
+
+                let mut payload =
+                    Vec::with_capacity(header.key_size as usize + header.value_size as usize);
+                payload.extend_from_slice(&header.key_size.to_be_bytes());
+                payload.extend_from_slice(&header.value_size.to_be_bytes());
+                payload.extend_from_slice(&[header.tombstone as u8]);
+                payload.extend_from_slice(&k_buf);
+                payload.extend_from_slice(&v_buf);
+                let crc32 = crc32(&payload);
+
+                if crc32 != header.crc32 {
+                    return Err(Error::new(std::io::ErrorKind::InvalidData, "CRC mismatch"));
+                }
+
+                Ok(Record {
+                    header,
+                    key: String::from_utf8(k_buf)
+                        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
+                    value: String::from_utf8(v_buf)
+                        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
+                })
+            }
+            Err(err) => Err(err),
+        }
+    }
 }

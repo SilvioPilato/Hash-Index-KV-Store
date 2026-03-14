@@ -4,7 +4,7 @@ use std::{
     io::{Error, Seek, SeekFrom},
 };
 
-use crate::record::read_record;
+use crate::record::Record;
 
 /// In-memory index mapping keys to their byte offsets in the database file.
 pub struct HashIndex {
@@ -58,7 +58,7 @@ impl HashIndex {
 
         while file.stream_position()? < file_size {
             let offset = file.stream_position()?;
-            let record = read_record(file)?;
+            let record = Record::read_next(file)?;
             let header = record.header;
 
             if header.tombstone {
@@ -86,7 +86,7 @@ impl HashIndex {
 
         while file.stream_position()? < file_size {
             let offset = file.stream_position()?;
-            let record = read_record(file)?;
+            let record = Record::read_next(file)?;
             let header = record.header;
 
             if header.tombstone {
