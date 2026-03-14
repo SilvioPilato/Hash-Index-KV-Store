@@ -33,6 +33,8 @@ Apply idiomatic Rust improvements across the codebase (sources: Rust API Guideli
 
 ## #17 — Hint files for fast startup (DDIA Ch. 3, Bitcask paper)
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/14
+
 Added hint files — sidecar `.hint` files written during compaction containing `(key_size, offset, tombstone, key)` tuples. On startup, `from_dir` loads the index from hint files when available (skipping value bytes), falling back to full record scan when no hint exists. Compaction writes one hint file per new segment and cleans up old hint files alongside old segments.
 
 ## #22 — Move Record free functions into impl block
