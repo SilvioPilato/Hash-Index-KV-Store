@@ -2,7 +2,7 @@
 
 **⚠️ Experimental Project: This software is for experimental purposes only and is not intended for production use. Use at your own risk.**
 
-This project implements a simple key-value store that communicates over TCP. It uses a hash index in memory to keep track of data stored in a file. On startup, if an existing database directory is provided, the server rebuilds the index by scanning the latest segment file so that previously stored data is available immediately.
+This project implements a simple key-value store that communicates over TCP. It uses a hash index in memory to keep track of data stored across multiple segment files. On startup, if an existing database directory is provided, the server rebuilds the index by scanning all segment files so that previously stored data is available immediately.
 The purpose of the project is merely didactical, but if you want to tinker with it feel free to do it.
 
 ## Building
@@ -23,10 +23,11 @@ cargo run -- <db_directory> [options]
 
 ### Options
 
-| Flag           | Description               | Default         |
-| -------------- | ------------------------- | --------------- |
-| `-t`, `--tcp`  | TCP address to listen on  | `0.0.0.0:6666`  |
-| `-n`, `--name` | Segment file name prefix  | `segment`       |
+| Flag                        | Description                           | Default         |
+| --------------------------- | ------------------------------------- | --------------- |
+| `-t`, `--tcp`               | TCP address to listen on              | `0.0.0.0:6666`  |
+| `-n`, `--name`              | Segment file name prefix              | `segment`       |
+| `-msb`, `--max-segments-bytes` | Max bytes per segment before rolling | `52428800` (50MB) |
 
 ### Examples
 
@@ -40,7 +41,7 @@ cargo run -- /tmp/mydb --tcp 127.0.0.1:7777 --name mydata
 
 ## Testing
 
-To run all tests (7 unit + 3 integration):
+To run all tests:
 
 ```sh
 cargo test
@@ -58,7 +59,7 @@ You can interact with the server using a TCP client (e.g., `netcat` or `telnet`)
   * Example: `READ mykey`
 * **DELETE `<key>`**: Deletes the key and its associated value.
   * Example: `DELETE mykey`
-* **COMPACT**: Triggers background compaction of the database file. Compaction rewrites only the latest values into a new segment file, removing deleted keys and old overwrites. Writes block until compaction finishes. Concurrent compaction requests are rejected (returns `NOOP`).
+* **COMPACT**: Triggers background compaction of the database. Compaction rewrites only the latest values into fresh segment file(s), removing deleted keys and old overwrites, then deletes the old segment files. Writes block until compaction finishes. Concurrent compaction requests are rejected (returns `NOOP`).
   * Example: `COMPACT`
 * **STATS**: Returns runtime counters as `key=value` lines:
   * `compacting` — whether compaction is currently running
