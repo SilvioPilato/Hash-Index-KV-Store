@@ -20,6 +20,17 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 
 Several features need a background task that runs periodically: `Periodic` sync strategy (fsync every N seconds, à la Redis `everysec`), automatic compaction triggers, and potentially future housekeeping. Build a simple background worker that the `DB` owns — a spawned thread with a configurable tick interval that can run scheduled jobs (sync, compaction check, etc.) and shuts down cleanly when the `DB` is dropped. This is a shared prerequisite for periodic sync (#13) and automatic compaction.
 
+## #24 — Rust best practices cleanup
+
+Apply idiomatic Rust improvements across the codebase (sources: Rust API Guidelines, The Rust Book ch. 9, clippy pedantic lints):
+
+1. **`DB::new` should return `Result`** — currently panics on filesystem errors (`unwrap()` on `create_dir_all`, `OpenOptions::open`). Return `io::Result<DB>` and use `?` instead.
+2. **Reduce `unwrap()` in production paths** — `main.rs` (`TcpListener::bind`), `db.rs` (`file.seek` in `get`), `from_dir` (double `active_segment.unwrap()`). Propagate errors with `?` where possible.
+3. **Simplify `Record::read_next`** — replace the `match Ok(header) / Err(err) => Err(err)` with `let header = Record::read_header(file)?;`.
+4. **Use `Path`/`PathBuf` instead of `String` for filesystem paths** — `db_path` and `db_name` fields, function parameters like `get_segments(dir)`, `Segment::path(dir)`.
+5. **Return `impl Iterator` from `ls_keys`** — instead of the concrete `hash_map::Keys<'_, String, IndexEntry>` type, which leaks the internal `HashMap`.
+6. **Remove redundant parse-then-to_string in `settings.rs`** — `value.parse::<String>().expect(...)` followed by `.to_string()` can just use `value` directly.
+
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
