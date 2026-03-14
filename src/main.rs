@@ -37,6 +37,7 @@ fn main() {
         &settings.db_file_path,
         &settings.db_name,
         settings.max_segment_bytes,
+        settings.sync_strategy,
     )
     .unwrap()
     {
@@ -45,6 +46,7 @@ fn main() {
             &settings.db_file_path,
             &settings.db_name,
             settings.max_segment_bytes,
+            settings.sync_strategy,
         ),
     };
     let db_handle = Arc::new(RwLock::new(database));
