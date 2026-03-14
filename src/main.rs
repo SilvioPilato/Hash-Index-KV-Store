@@ -33,9 +33,19 @@ fn log_verbose(message: impl AsRef<str>) {
 fn main() {
     let settings = Settings::get_from_args();
 
-    let database = match DB::from_dir(&settings.db_file_path, &settings.db_name).unwrap() {
+    let database = match DB::from_dir(
+        &settings.db_file_path,
+        &settings.db_name,
+        settings.max_segment_bytes,
+    )
+    .unwrap()
+    {
         Some(db) => db,
-        None => DB::new(&settings.db_file_path, &settings.db_name),
+        None => DB::new(
+            &settings.db_file_path,
+            &settings.db_name,
+            settings.max_segment_bytes,
+        ),
     };
     let db_handle = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());

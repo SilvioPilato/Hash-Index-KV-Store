@@ -33,6 +33,12 @@ pub struct Record {
     pub value: String,
 }
 
+impl Record {
+    pub fn size_on_disk(&self) -> u64 {
+        RECORD_HEADER_LEN as u64 + self.header.key_size + self.header.value_size
+    }
+}
+
 /// Reads a [`RecordHeader`] from the current position of the given reader.
 ///
 /// Consumes exactly 16 bytes (two big-endian `u64` values) and returns

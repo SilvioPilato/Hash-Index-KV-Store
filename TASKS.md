@@ -31,6 +31,10 @@ Implement a **sorted string table** segment format alongside (or replacing) the 
 
 Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
+## #22 — Move Record free functions into impl block
+
+`read_record`, `read_record_at`, and `append_record` are free functions in `record.rs`. Refactor them into methods on `Record` (`Record::read()`, `Record::read_at()`, `record.append()`) for a more idiomatic API. This will touch call sites in `db.rs`, `hash_index.rs`, and tests.
+
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
