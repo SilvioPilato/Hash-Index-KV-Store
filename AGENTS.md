@@ -51,10 +51,11 @@ Do **not** commit or open a PR until all three pass. If a step fails, fix the is
 | Path | Purpose |
 |------|---------|
 | `src/main.rs` | TCP server, command parsing, request handling |
-| `src/db.rs` | DB struct — get/set/delete/compact operations |
-| `src/record.rs` | On-disk record format (header + key + value) |
-| `src/hash_index.rs` | In-memory hash map index (key → byte offset) |
+| `src/db.rs` | DB struct — get/set/delete/compact, segment rolling |
+| `src/record.rs` | On-disk record format (header + CRC + key + value) |
+| `src/crc.rs` | Hand-rolled CRC32 (IEEE polynomial, compile-time table) |
+| `src/hash_index.rs` | In-memory hash map index (key → IndexEntry: segment + offset) |
 | `src/segment.rs` | Segment file naming, parsing, listing |
 | `src/settings.rs` | CLI argument parsing |
 | `src/stats.rs` | Atomic runtime counters |
-| `tests/` | Integration tests (TCP-level) |
+| `tests/` | All tests (unit and integration) |
