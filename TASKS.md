@@ -16,10 +16,6 @@ Implement a **sorted string table** segment format alongside (or replacing) the 
 
 Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
-## #22 — Move Record free functions into impl block
-
-`read_record`, `read_record_at`, and `append_record` are free functions in `record.rs`. Refactor them into methods on `Record` (`Record::read()`, `Record::read_at()`, `record.append()`) for a more idiomatic API. This will touch call sites in `db.rs`, `hash_index.rs`, and tests.
-
 ## #23 — Background thread/timer infrastructure
 
 Several features need a background task that runs periodically: `Periodic` sync strategy (fsync every N seconds, à la Redis `everysec`), automatic compaction triggers, and potentially future housekeeping. Build a simple background worker that the `DB` owns — a spawned thread with a configurable tick interval that can run scheduled jobs (sync, compaction check, etc.) and shuts down cleanly when the `DB` is dropped. This is a shared prerequisite for periodic sync (#13) and automatic compaction.
@@ -27,6 +23,12 @@ Several features need a background task that runs periodically: `Periodic` sync 
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #22 — Move Record free functions into impl block
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/13
+
+Refactored `read_record`, `read_record_at`, and `append_record` from free functions in `record.rs` into methods on `Record`: `Record::read_next()`, `Record::read_record_at()`, `record.append()`. Updated all call sites in `db.rs`, `hash_index.rs`, and `tests/crc.rs`.
 
 ## #13 — Review sync strategy for write performance
 

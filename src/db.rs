@@ -2,9 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, Seek, SeekFrom};
 
 use crate::hash_index::HashIndex;
-use crate::record::{
-    MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader, append_record, read_record,
-};
+use crate::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader};
 use crate::segment::{Segment, get_segments};
 use crate::settings::FSyncStrategy;
 
@@ -119,7 +117,7 @@ impl DB {
 
         file.seek(SeekFrom::Start(entry.offset)).unwrap();
 
-        let record = read_record(&mut file)?;
+        let record = Record::read_next(&mut file)?;
 
         Ok(Some((record.key, record.value)))
     }
@@ -158,7 +156,7 @@ impl DB {
             self.roll_segment()?;
         }
         let mut file = self.active_file.try_clone()?;
-        let offset = append_record(&mut file, &record)?;
+        let offset = record.append(&mut file)?;
         self.index
             .set(key.to_string(), offset, self.active_segment.timestamp);
         self.fsync()?;
@@ -186,7 +184,7 @@ impl DB {
                     key: key.to_string(),
                     value: String::new(),
                 };
-                append_record(&mut file, &record)?;
+                record.append(&mut file)?;
                 self.fsync()?;
                 Ok(Some(()))
             }
