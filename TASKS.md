@@ -30,6 +30,8 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 
 ## #16 — Segment size limit + multi-segment reads (DDIA Ch. 3)
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/11
+
 The DB uses a single segment that grows forever. DDIA describes how Bitcask rolls to a new segment file once the active one hits a size threshold, and compaction merges old segments. The work:
 
 - Add a `max_segment_bytes` setting.
