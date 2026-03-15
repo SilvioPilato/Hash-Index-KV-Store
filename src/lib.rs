@@ -6,3 +6,4 @@ pub mod record;
 pub mod segment;
 pub mod settings;
 pub mod stats;
+pub mod worker;

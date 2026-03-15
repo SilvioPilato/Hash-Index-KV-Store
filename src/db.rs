@@ -1,11 +1,13 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, Seek, SeekFrom};
+use std::path::PathBuf;
 
 use crate::hash_index::HashIndex;
 use crate::hint::{Hint, HintEntry};
 use crate::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader};
 use crate::segment::{Segment, get_segments};
 use crate::settings::FSyncStrategy;
+use crate::worker::BackgroundWorker;
 
 pub struct DB {
     index: HashIndex,
@@ -16,6 +18,7 @@ pub struct DB {
     max_segment_bytes: u64,
     writes_since_fsync: u64,
     fsync_strategy: FSyncStrategy,
+    fsync_handle: Option<BackgroundWorker>,
 }
 
 impl DB {
@@ -37,7 +40,7 @@ impl DB {
             .create(true)
             .truncate(false)
             .open(segment.path(db_path))?;
-
+        let fsync_handle = Self::spawn_fsync_worker(fsync_strategy, segment.path(db_path));
         Ok(DB {
             index: HashIndex::new(),
             active_file: file,
@@ -47,6 +50,7 @@ impl DB {
             max_segment_bytes,
             writes_since_fsync: 0,
             fsync_strategy,
+            fsync_handle,
         })
     }
 
@@ -100,6 +104,7 @@ impl DB {
             active_segment = Some(segment);
         }
         let segment = active_segment.unwrap().to_owned();
+        let fsync_handle = Self::spawn_fsync_worker(fsync_strategy, segment.path(db_dir));
         Ok(Some(DB {
             index: hash_index,
             active_file: current_file.unwrap(),
@@ -112,6 +117,7 @@ impl DB {
             max_segment_bytes,
             writes_since_fsync: 0,
             fsync_strategy,
+            fsync_handle,
         }))
     }
 
@@ -274,6 +280,10 @@ impl DB {
 
     /// Closes the current active segment and opens a new one.
     fn roll_segment(&mut self) -> io::Result<()> {
+        if let Some(worker) = self.fsync_handle.take() {
+            drop(worker);
+        }
+
         let segment = Segment::new(&self.db_name).map_err(io::Error::other)?;
         let file: File = OpenOptions::new()
             .read(true)
@@ -283,7 +293,31 @@ impl DB {
             .open(segment.path(&self.db_path))?;
         self.active_file = file;
         self.active_segment = segment;
+        self.fsync_handle =
+            Self::spawn_fsync_worker(self.fsync_strategy, self.active_segment.path(&self.db_path));
         Ok(())
+    }
+
+    /// Spawns a background worker that periodically fsyncs the given segment file.
+    ///
+    /// Returns `None` if the fsync strategy is not `Periodic`.
+    fn spawn_fsync_worker(
+        fsync_strategy: FSyncStrategy,
+        segment_path: PathBuf,
+    ) -> Option<BackgroundWorker> {
+        if let FSyncStrategy::Periodic(duration) = fsync_strategy {
+            let job = move || {
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&segment_path)
+                    .unwrap();
+                file.sync_all().unwrap();
+            };
+            Some(BackgroundWorker::spawn(duration, job))
+        } else {
+            None
+        }
     }
 
     /// Flushes writes to disk according to the configured `FSyncStrategy`.
@@ -301,6 +335,7 @@ impl DB {
                     self.active_file.sync_all()?
                 }
             }
+            FSyncStrategy::Periodic(_) => {}
         }
 
         Ok(())

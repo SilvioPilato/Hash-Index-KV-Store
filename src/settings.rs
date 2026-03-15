@@ -1,12 +1,14 @@
 use std::{
     env::{self},
     net::SocketAddr,
+    time::Duration,
 };
 
 #[derive(Copy, Clone)]
 pub enum FSyncStrategy {
     Always,
     EveryN(usize),
+    Periodic(Duration),
     Never,
 }
 
@@ -64,16 +66,29 @@ impl Settings {
         match s {
             "always" => Ok(FSyncStrategy::Always),
             "never" => Ok(FSyncStrategy::Never),
-            s if s.starts_with("every:") => {
-                let val = &s["every:".len()..];
+            _ => {
+                let val = s
+                    .strip_prefix("every:")
+                    .ok_or_else(|| format!("unknown fsync policy: {s}"))?;
 
-                if let Ok(n) = val.parse::<usize>() {
-                    return Ok(FSyncStrategy::EveryN(n));
+                if let Some(secs_str) = val.strip_suffix('s') {
+                    let n: u64 = secs_str
+                        .parse()
+                        .map_err(|_| format!("invalid fsync interval: {val}"))?;
+                    if n == 0 {
+                        return Err("fsync interval must be > 0".into());
+                    }
+                    Ok(FSyncStrategy::Periodic(Duration::from_secs(n)))
+                } else {
+                    let n: usize = val
+                        .parse()
+                        .map_err(|_| format!("invalid fsync interval: {val}"))?;
+                    if n == 0 {
+                        return Err("fsync interval must be > 0".into());
+                    }
+                    Ok(FSyncStrategy::EveryN(n))
                 }
-                // later: try parsing as duration ("1s", "500ms")
-                Err(format!("invalid fsync interval: {val}"))
             }
-            _ => Err(format!("unknown fsync policy: {s}")),
         }
     }
 }
