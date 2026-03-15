@@ -56,6 +56,7 @@ Do **not** commit or open a PR until all three pass. If a step fails, fix the is
 | `src/crc.rs` | Hand-rolled CRC32 (IEEE polynomial, compile-time table) |
 | `src/hash_index.rs` | In-memory hash map index (key → IndexEntry: segment + offset) |
 | `src/segment.rs` | Segment file naming, parsing, listing |
-| `src/settings.rs` | CLI argument parsing |
+| `src/settings.rs` | CLI argument parsing, `FSyncStrategy` enum |
 | `src/stats.rs` | Atomic runtime counters |
+| `src/worker.rs` | Background thread worker (periodic fsync, clean shutdown via `Drop`) |
 | `tests/` | All tests (unit and integration) |

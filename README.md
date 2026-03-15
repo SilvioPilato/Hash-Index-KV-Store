@@ -28,6 +28,7 @@ cargo run -- <db_directory> [options]
 | `-t`, `--tcp`               | TCP address to listen on              | `0.0.0.0:6666`  |
 | `-n`, `--name`              | Segment file name prefix              | `segment`       |
 | `-msb`, `--max-segments-bytes` | Max bytes per segment before rolling | `52428800` (50MB) |
+| `-fsync`, `--fsync-interval` | Fsync strategy: `always`, `never`, `every:N` (every N writes), `every:Ns` (every N seconds) | `always` |
 
 ### Examples
 

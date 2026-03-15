@@ -12,13 +12,13 @@ Implement a **sorted string table** segment format alongside (or replacing) the 
 
 Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
-## #23 — Background thread/timer infrastructure
-
-Several features need a background task that runs periodically: `Periodic` sync strategy (fsync every N seconds, à la Redis `everysec`), automatic compaction triggers, and potentially future housekeeping. Build a simple background worker that the `DB` owns — a spawned thread with a configurable tick interval that can run scheduled jobs (sync, compaction check, etc.) and shuts down cleanly when the `DB` is dropped. This is a shared prerequisite for periodic sync (#13) and automatic compaction.
-
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #23 — Background thread/timer infrastructure
+
+Added a `BackgroundWorker` struct (`src/worker.rs`) that spawns a thread with a configurable tick interval, runs a job each tick via `park_timeout`, and shuts down cleanly on `Drop` (stop flag + `unpark` + `join`). Integrated as the first periodic job: `FSyncStrategy::Periodic(Duration)` opens a duplicate file descriptor each tick and calls `sync_all()`. The worker is restarted on segment rolls. Extracted `spawn_fsync_worker` helper to deduplicate the pattern across `new`, `from_dir`, and `roll_segment`. Updated `parse_fsync` to accept `every:Ns` syntax. Added 5 tests.
 
 ## #24 — Rust best practices cleanup
 
