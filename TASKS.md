@@ -22,6 +22,8 @@ Several features need a background task that runs periodically: `Periodic` sync 
 
 ## #24 — Rust best practices cleanup
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/15
+
 Applied idiomatic Rust improvements across the codebase:
 
 1. `DB::new` returns `io::Result<DB>` instead of panicking on filesystem errors.
