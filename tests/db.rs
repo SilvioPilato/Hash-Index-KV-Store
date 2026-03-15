@@ -21,7 +21,8 @@ fn set_and_get() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("hello", "world").unwrap();
     let (_, value) = db.get("hello").unwrap().unwrap();
     assert_eq!(value, "world");
@@ -34,7 +35,8 @@ fn get_missing_key() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     assert_eq!(db.get("nope").unwrap(), None);
 }
 
@@ -45,7 +47,8 @@ fn set_overwrite() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("k", "old").unwrap();
     db.set("k", "new").unwrap();
     let (_, value) = db.get("k").unwrap().unwrap();
@@ -59,7 +62,8 @@ fn compact_preserves_values() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
     db.set("k2", "v2").unwrap();
 
@@ -78,7 +82,8 @@ fn compact_keeps_latest_value() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
     db.set("k1", "v2").unwrap();
 
@@ -95,7 +100,8 @@ fn compact_drops_deleted_keys() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
     db.delete("k1").unwrap();
 
@@ -111,7 +117,8 @@ fn compact_is_idempotent() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
     db.set("k2", "v2").unwrap();
 
@@ -128,7 +135,7 @@ fn compact_is_idempotent() {
 fn segment_rolls_when_full() {
     // Use a tiny limit so that a second write triggers a new segment
     let path = temp_db_path("roll");
-    let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always);
+    let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
 
@@ -143,7 +150,7 @@ fn segment_rolls_when_full() {
 fn from_dir_loads_all_segments() {
     let path = temp_db_path("from_dir_multi");
     {
-        let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always);
+        let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
         db.set("k1", "value_one").unwrap();
         db.set("k2", "value_two").unwrap();
     }
@@ -161,7 +168,7 @@ fn from_dir_loads_all_segments() {
 #[test]
 fn compact_merges_segments() {
     let path = temp_db_path("compact_merge");
-    let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always);
+    let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
     db.set("k1", "updated").unwrap();
@@ -180,7 +187,8 @@ fn sync_never_writes_are_readable() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Never,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
     db.set("k2", "v2").unwrap();
     let (_, v1) = db.get("k1").unwrap().unwrap();
@@ -196,7 +204,8 @@ fn sync_every_n_writes_are_readable() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::EveryN(3),
-    );
+    )
+    .unwrap();
     for i in 0..10 {
         db.set(&format!("k{i}"), &format!("v{i}")).unwrap();
     }
@@ -213,7 +222,8 @@ fn sync_never_delete_works() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Never,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
     db.delete("k1").unwrap();
     assert_eq!(db.get("k1").unwrap(), None);
@@ -222,7 +232,7 @@ fn sync_never_delete_works() {
 #[test]
 fn sync_every_n_compaction_preserves_data() {
     let path = temp_db_path("sync_every_n_compact");
-    let mut db = DB::new(&path, "test", 50, FSyncStrategy::EveryN(2));
+    let mut db = DB::new(&path, "test", 50, FSyncStrategy::EveryN(2)).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
     db.set("k1", "updated").unwrap();

@@ -39,8 +39,7 @@ impl Settings {
                 }
                 "-n" | "--name" => {
                     if let Some(value) = args.next() {
-                        let name: String = value.parse().expect("Invalid db name");
-                        settings.db_name = name.to_string();
+                        settings.db_name = value.to_string();
                     }
                 }
                 "-msb" | "--max-segments-bytes" => {
@@ -52,7 +51,6 @@ impl Settings {
                 }
                 "-fsync" | "--fsync-interval" => {
                     if let Some(value) = args.next() {
-                        let value: String = value.parse().expect("Invalid fsync interval provided");
                         settings.sync_strategy = Settings::parse_fsync(&value).unwrap();
                     }
                 }

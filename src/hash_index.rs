@@ -39,7 +39,7 @@ impl HashIndex {
     }
 
     /// Returns an iterator over all keys in the index.
-    pub fn ls_keys(&self) -> std::collections::hash_map::Keys<'_, String, IndexEntry> {
+    pub fn ls_keys(&self) -> impl Iterator<Item = &String> {
         self.hashmap.keys()
     }
 

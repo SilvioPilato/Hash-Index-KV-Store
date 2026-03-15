@@ -3,6 +3,7 @@ use hash_index::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
 use hash_index::settings::Settings;
 use hash_index::stats::Stats;
 use std::env;
+use std::io;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -30,7 +31,7 @@ fn log_verbose(message: impl AsRef<str>) {
     }
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let settings = Settings::get_from_args();
 
     let database = match DB::from_dir(
@@ -38,16 +39,14 @@ fn main() {
         &settings.db_name,
         settings.max_segment_bytes,
         settings.sync_strategy,
-    )
-    .unwrap()
-    {
+    )? {
         Some(db) => db,
         None => DB::new(
             &settings.db_file_path,
             &settings.db_name,
             settings.max_segment_bytes,
             settings.sync_strategy,
-        ),
+        )?,
     };
     let db_handle = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());
@@ -77,6 +76,7 @@ fn main() {
             }
         }
     }
+    Ok(())
 }
 
 fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stats>) -> String {
