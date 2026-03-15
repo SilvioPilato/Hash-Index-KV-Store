@@ -1,5 +1,6 @@
 use std::io;
 use std::{fs::read_dir, path::PathBuf, time::SystemTime};
+#[derive(Clone)]
 pub struct Segment {
     pub segment_name: String,
     pub timestamp: u64,

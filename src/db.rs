@@ -19,23 +19,26 @@ pub struct DB {
 }
 
 impl DB {
+    /// Creates a new, empty database in the given directory.
+    ///
+    /// Creates `db_path` if it does not exist, opens a fresh segment file,
+    /// and returns a `DB` ready for reads and writes.
     pub fn new(
         db_path: &str,
         db_name: &str,
         max_segment_bytes: u64,
         fsync_strategy: FSyncStrategy,
-    ) -> DB {
-        std::fs::create_dir_all(db_path).unwrap();
-        let segment = Segment::new(db_name).unwrap();
+    ) -> io::Result<DB> {
+        std::fs::create_dir_all(db_path)?;
+        let segment = Segment::new(db_name).map_err(io::Error::other)?;
         let file: File = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(segment.path(db_path))
-            .unwrap();
+            .open(segment.path(db_path))?;
 
-        DB {
+        Ok(DB {
             index: HashIndex::new(),
             active_file: file,
             db_path: db_path.to_string(),
@@ -44,9 +47,17 @@ impl DB {
             max_segment_bytes,
             writes_since_fsync: 0,
             fsync_strategy,
-        }
+        })
     }
 
+    /// Reopens an existing database from disk.
+    ///
+    /// Scans `db_dir` for segment files matching `db_name`, rebuilds the
+    /// in-memory index (from hint files when available, otherwise by scanning
+    /// records), and returns a `DB` positioned at the latest segment.
+    ///
+    /// Returns `Ok(None)` if the directory does not exist or contains no
+    /// matching segments.
     pub fn from_dir(
         db_dir: &str,
         db_name: &str,
@@ -88,14 +99,15 @@ impl DB {
             current_file = Some(file);
             active_segment = Some(segment);
         }
+        let segment = active_segment.unwrap().to_owned();
         Ok(Some(DB {
             index: hash_index,
             active_file: current_file.unwrap(),
             db_path: db_dir.to_string(),
             db_name: db_name.to_string(),
             active_segment: Segment {
-                segment_name: active_segment.unwrap().segment_name.clone(),
-                timestamp: active_segment.unwrap().timestamp,
+                segment_name: segment.segment_name,
+                timestamp: segment.timestamp,
             },
             max_segment_bytes,
             writes_since_fsync: 0,
@@ -103,15 +115,13 @@ impl DB {
         }))
     }
 
-    /// Retrieves the value associated with the given key.
+    /// Retrieves the key-value pair associated with the given key.
     ///
-    /// Looks up the key in the in-memory index to find the byte offset in the
-    /// database file, then reads the entry using the format:
-    /// `|size_k (8 bytes BE u64)|size_v (8 bytes BE u64)|key (raw UTF-8)|value (raw UTF-8)|`
-    /// Skips past the key bytes and returns the value.
+    /// Looks up the key in the in-memory index, seeks to the record's byte
+    /// offset in the appropriate segment file, and reads the full record
+    /// (verifying its CRC32 checksum).
     ///
-    /// Returns `None` if the key is not in the index or if the stored bytes
-    /// are not valid UTF-8.
+    /// Returns `Ok(None)` if the key is not in the index.
     pub fn get(&self, key: &str) -> Result<Option<(String, String)>, Error> {
         let entry = match self.index.get(key) {
             Some(o) => o,
@@ -128,7 +138,7 @@ impl DB {
             File::open(segment.path(&self.db_path))?
         };
 
-        file.seek(SeekFrom::Start(entry.offset)).unwrap();
+        file.seek(SeekFrom::Start(entry.offset))?;
 
         let record = Record::read_next(&mut file)?;
 
@@ -137,14 +147,12 @@ impl DB {
 
     /// Inserts or updates a key-value pair in the database.
     ///
-    /// Appends an entry to the end of the database file using the format:
-    /// `|size_k (8 bytes BE u64)|size_v (8 bytes BE u64)|key (raw UTF-8)|value (raw UTF-8)|`
-    /// with no separators between fields. Then records the byte offset of
-    /// this new entry in the in-memory index under the given key.
+    /// Appends a record to the active segment file and updates the in-memory
+    /// index. If the active segment would exceed `max_segment_bytes`, a new
+    /// segment is rolled first.
     ///
-    /// If the key already existed, the old entry remains as dead bytes in the
-    /// file (reclaimed later by compaction) and the index is updated to point
-    /// to the new one.
+    /// Previous entries for the same key become dead bytes, reclaimable by
+    /// compaction.
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), Error> {
         if key.len() > MAX_KEY_SIZE || value.len() > MAX_VALUE_SIZE {
             return Err(Error::new(
@@ -177,6 +185,11 @@ impl DB {
         Ok(())
     }
 
+    /// Deletes a key from the database.
+    ///
+    /// Removes the key from the in-memory index and appends a tombstone
+    /// record to the active segment. Returns `Ok(None)` if the key was not
+    /// present.
     pub fn delete(&mut self, key: &str) -> Result<Option<()>, Error> {
         if key.len() > MAX_KEY_SIZE {
             return Err(Error::new(
@@ -205,6 +218,10 @@ impl DB {
         }
     }
 
+    /// Compacts the database by rewriting only live key-value pairs into
+    /// fresh segments, then deleting the old segment and hint files.
+    ///
+    /// Returns a new `DB` instance backed by the compacted segments.
     pub fn get_compacted(&self) -> Result<DB, Error> {
         let old_segments = get_segments(&self.db_path, &self.db_name)?;
         let mut new_db = DB::new(
@@ -212,7 +229,7 @@ impl DB {
             &self.db_name,
             self.max_segment_bytes,
             self.fsync_strategy,
-        );
+        )?;
 
         let keys: Vec<String> = self.index.ls_keys().cloned().collect();
         for k in keys {
@@ -255,8 +272,9 @@ impl DB {
         Ok(new_db)
     }
 
+    /// Closes the current active segment and opens a new one.
     fn roll_segment(&mut self) -> io::Result<()> {
-        let segment = Segment::new(&self.db_name).unwrap();
+        let segment = Segment::new(&self.db_name).map_err(io::Error::other)?;
         let file: File = OpenOptions::new()
             .read(true)
             .write(true)
@@ -268,6 +286,7 @@ impl DB {
         Ok(())
     }
 
+    /// Flushes writes to disk according to the configured `FSyncStrategy`.
     fn fsync(&mut self) -> io::Result<()> {
         self.writes_since_fsync += 1;
         match self.fsync_strategy {

@@ -116,44 +116,36 @@ impl Record {
     /// CRC32 checksum. Returns [`ErrorKind::InvalidData`] on CRC mismatch
     /// or invalid UTF-8.
     pub fn read_next(file: &mut impl Read) -> io::Result<Record> {
-        match Record::read_header(file) {
-            Ok(header) => {
-                if header.key_size as usize > MAX_KEY_SIZE
-                    || header.value_size as usize > MAX_VALUE_SIZE
-                {
-                    return Err(Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "key or value exceeds maximum allowed size",
-                    ));
-                }
+        let header = Record::read_header(file)?;
 
-                let mut k_buf = vec![0u8; header.key_size as usize];
-                let mut v_buf: Vec<u8> = vec![0u8; header.value_size as usize];
-                file.read_exact(&mut k_buf)?;
-                file.read_exact(&mut v_buf)?;
-
-                let mut payload =
-                    Vec::with_capacity(header.key_size as usize + header.value_size as usize);
-                payload.extend_from_slice(&header.key_size.to_be_bytes());
-                payload.extend_from_slice(&header.value_size.to_be_bytes());
-                payload.extend_from_slice(&[header.tombstone as u8]);
-                payload.extend_from_slice(&k_buf);
-                payload.extend_from_slice(&v_buf);
-                let crc32 = crc32(&payload);
-
-                if crc32 != header.crc32 {
-                    return Err(Error::new(std::io::ErrorKind::InvalidData, "CRC mismatch"));
-                }
-
-                Ok(Record {
-                    header,
-                    key: String::from_utf8(k_buf)
-                        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
-                    value: String::from_utf8(v_buf)
-                        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
-                })
-            }
-            Err(err) => Err(err),
+        if header.key_size as usize > MAX_KEY_SIZE || header.value_size as usize > MAX_VALUE_SIZE {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "key or value exceeds maximum allowed size",
+            ));
         }
+
+        let mut k_buf = vec![0u8; header.key_size as usize];
+        let mut v_buf: Vec<u8> = vec![0u8; header.value_size as usize];
+        file.read_exact(&mut k_buf)?;
+        file.read_exact(&mut v_buf)?;
+
+        let mut payload = Vec::with_capacity(header.key_size as usize + header.value_size as usize);
+        payload.extend_from_slice(&header.key_size.to_be_bytes());
+        payload.extend_from_slice(&header.value_size.to_be_bytes());
+        payload.extend_from_slice(&[header.tombstone as u8]);
+        payload.extend_from_slice(&k_buf);
+        payload.extend_from_slice(&v_buf);
+        let crc32 = crc32(&payload);
+
+        if crc32 != header.crc32 {
+            return Err(Error::new(std::io::ErrorKind::InvalidData, "CRC mismatch"));
+        }
+
+        Ok(Record {
+            header,
+            key: String::from_utf8(k_buf).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
+            value: String::from_utf8(v_buf).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
+        })
     }
 }

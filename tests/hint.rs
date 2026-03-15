@@ -93,7 +93,8 @@ fn compaction_produces_hint_files() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
     db.set("k2", "v2").unwrap();
 
@@ -116,7 +117,8 @@ fn from_dir_loads_via_hint_files() {
             "test",
             DEFAULT_MAX_SEGMENT_BYTES,
             FSyncStrategy::Always,
-        );
+        )
+        .unwrap();
         db.set("k1", "v1").unwrap();
         db.set("k2", "v2").unwrap();
         db.set("k1", "updated").unwrap();
@@ -150,7 +152,8 @@ fn from_dir_falls_back_without_hint_files() {
             "test",
             DEFAULT_MAX_SEGMENT_BYTES,
             FSyncStrategy::Always,
-        );
+        )
+        .unwrap();
         db.set("k1", "v1").unwrap();
         db.set("k2", "v2").unwrap();
         let _compacted = db.get_compacted().unwrap();
@@ -185,7 +188,8 @@ fn compaction_cleans_up_old_hint_files() {
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
         FSyncStrategy::Always,
-    );
+    )
+    .unwrap();
     db.set("k1", "v1").unwrap();
 
     // First compaction — produces hint file(s)
@@ -217,7 +221,7 @@ fn compaction_cleans_up_old_hint_files() {
 fn hint_files_with_multi_segment_compaction() {
     // Use tiny segment limit to force multiple segments, then compact
     let path = temp_db_path("multi_seg_hint");
-    let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always);
+    let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
     db.set("k3", "value_three").unwrap();
