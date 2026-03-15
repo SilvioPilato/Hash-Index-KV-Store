@@ -18,6 +18,8 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 
 ## #23 — Background thread/timer infrastructure
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/16
+
 Added a `BackgroundWorker` struct (`src/worker.rs`) that spawns a thread with a configurable tick interval, runs a job each tick via `park_timeout`, and shuts down cleanly on `Drop` (stop flag + `unpark` + `join`). Integrated as the first periodic job: `FSyncStrategy::Periodic(Duration)` opens a duplicate file descriptor each tick and calls `sync_all()`. The worker is restarted on segment rolls. Extracted `spawn_fsync_worker` helper to deduplicate the pattern across `new`, `from_dir`, and `roll_segment`. Updated `parse_fsync` to accept `every:Ns` syntax. Added 5 tests.
 
 ## #24 — Rust best practices cleanup
