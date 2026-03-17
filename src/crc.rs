@@ -32,3 +32,13 @@ pub fn crc32(data: &[u8]) -> u32 {
     }
     crc ^ 0xFFFF_FFFF
 }
+
+pub fn crc32_seeded(data: &[u8], seed: u32) -> u32 {
+    let mut crc = seed;
+
+    for &byte in data {
+        let index = ((crc as u8) ^ byte) as usize;
+        crc = LOOKUP_TABLE[index] ^ (crc >> 8);
+    }
+    crc ^ 0xFFFF_FFFF
+}

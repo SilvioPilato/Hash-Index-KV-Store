@@ -1,3 +1,4 @@
+pub mod bloom;
 pub mod crc;
 pub mod engine;
 pub mod hash_index;

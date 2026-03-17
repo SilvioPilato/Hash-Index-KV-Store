@@ -4,19 +4,17 @@
 
 ## #14 — Hardcoded port in integration tests
 
-Integration tests bind to a hardcoded port (`6666`). If anything else is using that port, tests fail. A more robust approach would be to bind to port 0, have the server report the assigned port, and have tests read it back.
-
-## #19 — Bloom filter for key existence (DDIA Ch. 3)
-
-Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
-
-## #25 — Memory-mapped I/O for SSTable reads
-
 Use `mmap` to memory-map SSTable files instead of reading via file I/O. Combined with a sparse index, lookups become pointer arithmetic + memcmp with no syscalls. Explore platform-specific considerations and safety tradeoffs.
 
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #19 — Bloom filter for key existence (DDIA Ch. 3)
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/18
+
+Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
 ## #18 — Simple SSTable / sorted segments (DDIA Ch. 3)
 
