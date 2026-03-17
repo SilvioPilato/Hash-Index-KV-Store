@@ -20,7 +20,7 @@ Use `mmap` to memory-map SSTable files instead of reading via file I/O. Combined
 
 ## #18 — Simple SSTable / sorted segments (DDIA Ch. 3)
 
-Implemented a sorted string table segment format as a second storage engine alongside the existing Bitcask-style KVEngine.
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/17 segment format as a second storage engine alongside the existing Bitcask-style KVEngine.
 
 **Architecture changes:**
 - Extracted `StorageEngine` trait (`src/engine.rs`) with `get`, `set`, `delete`, `compact` + `Send + Sync` supertraits.
