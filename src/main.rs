@@ -1,6 +1,7 @@
-use hash_index::db::DB;
+use hash_index::engine::StorageEngine;
+use hash_index::kvengine::KVEngine;
 use hash_index::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
-use hash_index::settings::Settings;
+use hash_index::settings::{EngineType, Settings};
 use hash_index::stats::Stats;
 use std::env;
 use std::io;
@@ -34,21 +35,25 @@ fn log_verbose(message: impl AsRef<str>) {
 fn main() -> io::Result<()> {
     let settings = Settings::get_from_args();
 
-    let database = match DB::from_dir(
-        &settings.db_file_path,
-        &settings.db_name,
-        settings.max_segment_bytes,
-        settings.sync_strategy,
-    )? {
-        Some(db) => db,
-        None => DB::new(
+    let database = match settings.engine {
+        EngineType::KV => match KVEngine::from_dir(
             &settings.db_file_path,
             &settings.db_name,
             settings.max_segment_bytes,
             settings.sync_strategy,
-        )?,
+        )? {
+            Some(db) => db,
+            None => KVEngine::new(
+                &settings.db_file_path,
+                &settings.db_name,
+                settings.max_segment_bytes,
+                settings.sync_strategy,
+            )?,
+        },
+        EngineType::Lsm => todo!(),
     };
-    let db_handle = Arc::new(RwLock::new(database));
+
+    let db_handle: Arc<RwLock<Box<dyn StorageEngine>>> = Arc::new(RwLock::new(Box::new(database)));
     let stats = Arc::new(Stats::new());
     let listener = TcpListener::bind(&settings.tcp_addr).unwrap();
 
@@ -79,7 +84,11 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stats>) -> String {
+fn handle_stream(
+    stream: &TcpStream,
+    database: Arc<RwLock<Box<dyn StorageEngine>>>,
+    stats: &Arc<Stats>,
+) -> String {
     const MAX_REQUEST_BYTES: u64 = (MAX_KEY_SIZE + MAX_VALUE_SIZE + 1024) as u64;
     let reader = BufReader::new(stream.take(MAX_REQUEST_BYTES));
     let request: Vec<_> = reader
@@ -158,8 +167,7 @@ fn handle_stream(stream: &TcpStream, database: Arc<RwLock<DB>>, stats: &Arc<Stat
             let stats_clone = Arc::clone(stats);
             thread::spawn(move || {
                 let mut db = db_clone.write().unwrap();
-                let compacted = db.get_compacted();
-                *db = compacted.unwrap();
+                db.compact().unwrap();
 
                 stats_clone
                     .last_compact_end_ms

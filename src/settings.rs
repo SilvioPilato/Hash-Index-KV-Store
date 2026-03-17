@@ -12,12 +12,19 @@ pub enum FSyncStrategy {
     Never,
 }
 
+#[derive(Copy, Clone)]
+pub enum EngineType {
+    KV,
+    Lsm,
+}
+
 pub struct Settings {
     pub db_file_path: String,
     pub tcp_addr: String,
     pub db_name: String,
     pub max_segment_bytes: u64,
     pub sync_strategy: FSyncStrategy,
+    pub engine: EngineType,
 }
 
 impl Settings {
@@ -30,6 +37,7 @@ impl Settings {
             db_name: "segment".to_string(),
             max_segment_bytes: 1_048_576 * 50,
             sync_strategy: FSyncStrategy::Always,
+            engine: EngineType::KV,
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -54,6 +62,11 @@ impl Settings {
                 "-fsync" | "--fsync-interval" => {
                     if let Some(value) = args.next() {
                         settings.sync_strategy = Settings::parse_fsync(&value).unwrap();
+                    }
+                }
+                "-e" | "--engine" => {
+                    if let Some(value) = args.next() {
+                        settings.engine = Settings::parse_engine(&value).unwrap();
                     }
                 }
                 _ => println!("Unknown argument: {}", arg),
@@ -89,6 +102,14 @@ impl Settings {
                     Ok(FSyncStrategy::EveryN(n))
                 }
             }
+        }
+    }
+
+    fn parse_engine(s: &str) -> Result<EngineType, String> {
+        match s {
+            "kv" => Ok(EngineType::KV),
+            "lsm" => Ok(EngineType::Lsm),
+            _ => Err(format!("Unsupported engine provided: {s}")),
         }
     }
 }
