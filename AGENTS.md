@@ -1,6 +1,6 @@
 # Agent Instructions
 
-This is a didactic Bitcask-style key-value store built while reading *Designing Data-Intensive Applications*. The project is educational — simplicity and clarity matter more than production-readiness.
+This is a didactic key-value store built while reading *Designing Data-Intensive Applications*. It supports two storage engines: a Bitcask-style hash-indexed engine (`kv`) and an LSM-tree engine with sorted string tables (`lsm`), selectable at startup via `--engine`. The project is educational — simplicity and clarity matter more than production-readiness.
 
 ## Task Workflow
 
@@ -52,12 +52,17 @@ Do **not** commit or open a PR until all three pass. If a step fails, fix the is
 | Path | Purpose |
 |------|---------|
 | `src/main.rs` | TCP server, command parsing, request handling |
-| `src/db.rs` | DB struct — get/set/delete/compact, segment rolling |
+| `src/engine.rs` | `StorageEngine` trait (`get`/`set`/`delete`/`compact` + `Send + Sync`) |
+| `src/kvengine.rs` | Bitcask-style engine — hash index, append-only segments, hint files |
+| `src/lsmengine.rs` | LSM-tree engine — memtable + sorted SSTable segments |
+| `src/memtable.rs` | In-memory `BTreeMap` write buffer with size tracking and tombstones |
+| `src/sstable.rs` | Sorted string table segment files with sparse index for fast lookups |
 | `src/record.rs` | On-disk record format (header + CRC + key + value) |
 | `src/crc.rs` | Hand-rolled CRC32 (IEEE polynomial, compile-time table) |
 | `src/hash_index.rs` | In-memory hash map index (key → IndexEntry: segment + offset) |
+| `src/hint.rs` | Hint file format for fast Bitcask startup (key + offset, no values) |
 | `src/segment.rs` | Segment file naming, parsing, listing |
-| `src/settings.rs` | CLI argument parsing, `FSyncStrategy` enum |
+| `src/settings.rs` | CLI argument parsing, `EngineType`, `FSyncStrategy` enums |
 | `src/stats.rs` | Atomic runtime counters |
 | `src/worker.rs` | Background thread worker (periodic fsync, clean shutdown via `Drop`) |
 | `tests/` | All tests (unit and integration) |

@@ -1,5 +1,6 @@
 use hash_index::engine::StorageEngine;
 use hash_index::kvengine::KVEngine;
+use hash_index::lsmengine::LsmEngine;
 use hash_index::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
 use hash_index::settings::{EngineType, Settings};
 use hash_index::stats::Stats;
@@ -35,25 +36,29 @@ fn log_verbose(message: impl AsRef<str>) {
 fn main() -> io::Result<()> {
     let settings = Settings::get_from_args();
 
-    let database = match settings.engine {
+    let database: Box<dyn StorageEngine> = match settings.engine {
         EngineType::KV => match KVEngine::from_dir(
             &settings.db_file_path,
             &settings.db_name,
             settings.max_segment_bytes,
             settings.sync_strategy,
         )? {
-            Some(db) => db,
-            None => KVEngine::new(
+            Some(db) => Box::new(db),
+            None => Box::new(KVEngine::new(
                 &settings.db_file_path,
                 &settings.db_name,
                 settings.max_segment_bytes,
                 settings.sync_strategy,
-            )?,
+            )?),
         },
-        EngineType::Lsm => todo!(),
+        EngineType::Lsm => Box::new(LsmEngine::from_dir(
+            &settings.db_file_path,
+            &settings.db_name,
+            settings.max_segment_bytes as usize,
+        )?),
     };
 
-    let db_handle: Arc<RwLock<Box<dyn StorageEngine>>> = Arc::new(RwLock::new(Box::new(database)));
+    let db_handle: Arc<RwLock<Box<dyn StorageEngine>>> = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());
     let listener = TcpListener::bind(&settings.tcp_addr).unwrap();
 

@@ -2,7 +2,12 @@
 
 **⚠️ Experimental Project: This software is for experimental purposes only and is not intended for production use. Use at your own risk.**
 
-This project implements a simple key-value store that communicates over TCP. It uses a hash index in memory to keep track of data stored across multiple segment files. On startup, if an existing database directory is provided, the server rebuilds the index by scanning all segment files so that previously stored data is available immediately.
+This project implements a simple key-value store that communicates over TCP, built while reading *Designing Data-Intensive Applications*. It supports two storage engines selectable at startup:
+
+- **KV (Bitcask)** — hash index in memory, append-only segment files, hint files for fast startup.
+- **LSM** — in-memory memtable (BTreeMap) flushed to sorted string table (SSTable) segments, with sparse index for fast lookups and merge-sort compaction.
+
+On startup, if an existing database directory is provided, the server rebuilds its state from segment files so that previously stored data is available immediately.
 The purpose of the project is merely didactical, but if you want to tinker with it feel free to do it.
 
 ## Building
@@ -29,6 +34,7 @@ cargo run -- <db_directory> [options]
 | `-n`, `--name`              | Segment file name prefix              | `segment`       |
 | `-msb`, `--max-segments-bytes` | Max bytes per segment before rolling | `52428800` (50MB) |
 | `-fsync`, `--fsync-interval` | Fsync strategy: `always`, `never`, `every:N` (every N writes), `every:Ns` (every N seconds) | `always` |
+| `-e`, `--engine`             | Storage engine: `kv` (Bitcask) or `lsm` (LSM-tree) | `kv` |
 
 ### Examples
 
