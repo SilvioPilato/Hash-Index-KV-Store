@@ -12,6 +12,8 @@ Use `mmap` to memory-map SSTable files instead of reading via file I/O. Combined
 
 ## #19 — Bloom filter for key existence (DDIA Ch. 3)
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/18
+
 Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
 ## #18 — Simple SSTable / sorted segments (DDIA Ch. 3)
