@@ -4,7 +4,59 @@
 
 ## #14 — Hardcoded port in integration tests
 
-Use `mmap` to memory-map SSTable files instead of reading via file I/O. Combined with a sparse index, lookups become pointer arithmetic + memcmp with no syscalls. Explore platform-specific considerations and safety tradeoffs.
+Integration tests currently use a hardcoded TCP port, which causes failures when tests run in parallel or on CI where the port may already be in use. Switch to port 0 (OS-assigned) so the OS picks an available port, and have the test read back the actual bound address. Quick hygiene fix.
+
+## #25 — WAL (Write-Ahead Log) for the LSM memtable (DDIA Ch. 3)
+
+The LSM engine's memtable is currently volatile — a crash before flush loses all in-flight writes. Add a write-ahead log that persists every write before applying it to the memtable, and replays uncommitted entries on startup. This is a core LSM-tree concept directly from DDIA's discussion of log-structured storage.
+
+## #26 — Persist Bloom filters and sparse index to disk (DDIA Ch. 3)
+
+Bloom filters and sparse indexes are currently rebuilt by scanning every SSTable file on startup. Serialize them to sidecar files (similar to hint files for Bitcask) so that LSM startup skips the full-file scan. Natural companion to the existing hint file infrastructure.
+
+## #27 — Leveled compaction (DDIA Ch. 3)
+
+Current LSM compaction merges all segments into a single SSTable. Real LSM-trees (LevelDB, RocksDB) use level-based compaction with size-tiered promotion between levels. Implementing this teaches write amplification tradeoffs and is the next natural step for the LSM engine.
+
+## #28 — mmap for SSTable reads (DDIA Ch. 3)
+
+Memory-map SSTable files so lookups become pointer arithmetic instead of `read()` syscalls. Combined with the sparse index, this eliminates per-lookup I/O overhead. Good exercise in OS-level I/O and `unsafe` Rust, with platform-specific considerations (Windows vs. Unix).
+
+## #29 — Block-based SSTable format with compression (DDIA Ch. 3)
+
+Partition SSTables into fixed-size blocks (e.g., 4 KB) with per-block compression (e.g., hand-rolled LZ77 or simple run-length encoding). Index points to block offsets instead of individual records. Teaches data layout optimization and compression fundamentals.
+
+## #30 — Binary protocol with length-prefixed framing (DDIA Ch. 4)
+
+Replace the text-based "line + blank line" TCP protocol with length-prefixed binary frames. Eliminates ambiguity around spaces in values, enables request pipelining, and is a good introduction to encoding formats and schema evolution (DDIA Ch. 4).
+
+## #31 — Connection timeouts and limits
+
+Currently there is no read timeout and unbounded thread spawning per TCP connection. Add `SO_TIMEOUT` on sockets, a maximum connection limit, and graceful backpressure when the limit is reached. Addresses real operational concerns without changing the threading model.
+
+## #32 — Async I/O with tokio
+
+Replace the thread-per-connection TCP model with async handling using tokio. Enables higher concurrency with lower resource usage. A major Rust learning exercise and a stepping stone toward replication and distributed features.
+
+## #33 — Single-leader replication (DDIA Ch. 5)
+
+Add a `--role leader|follower` flag. The leader streams its write-ahead log to followers over TCP; followers replay it to maintain a replica. Teaches replication logs, consistency models, and failover — core DDIA Ch. 5 material. Depends on WAL (#25).
+
+## #34 — Consistent hashing / partitioning (DDIA Ch. 6)
+
+Shard the keyspace across multiple kv-store instances using consistent hashing or range-based partitioning. A coordinator node routes requests to the correct shard. Teaches DDIA Ch. 6 partitioning concepts: rebalancing, hot spots, and partition-aware routing.
+
+## #35 — Automatic compaction trigger
+
+Instead of manual `COMPACT` commands, trigger compaction automatically when dead-bytes / total-bytes exceeds a configurable threshold or when segment count exceeds a limit. Uses the existing `BackgroundWorker` infrastructure. Small but impactful operational improvement.
+
+## #36 — Per-operation latency histograms
+
+Extend `Stats` to track per-operation latency distributions (p50/p95/p99). Implement a streaming quantile estimator (e.g., DDSketch or simple histogram buckets). Surface the results via the `STATS` command. Good exercise in streaming algorithms.
+
+## #37 — Crash-recovery and fault-injection tests
+
+Write tests that simulate crashes mid-write and mid-compaction (e.g., truncated files, partial records, missing hint files) and verify the engine recovers correctly. Validates the durability guarantees of both engines and exercises the CRC integrity checks.
 
 # Closed Tasks
 
@@ -21,11 +73,13 @@ Once there are multiple segments (from #16 or #18), checking every segment for a
 PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/17 segment format as a second storage engine alongside the existing Bitcask-style KVEngine.
 
 **Architecture changes:**
+
 - Extracted `StorageEngine` trait (`src/engine.rs`) with `get`, `set`, `delete`, `compact` + `Send + Sync` supertraits.
 - Existing Bitcask DB renamed to `KVEngine` (`src/kvengine.rs`), implements `StorageEngine`.
 - Added `--engine kv|lsm` CLI flag; `main.rs` uses `Box<dyn StorageEngine>` for runtime polymorphism.
 
 **LSM implementation:**
+
 - `Memtable` (`src/memtable.rs`): in-memory `BTreeMap<String, Option<String>>` with size tracking, tombstones, flush threshold.
 - `SSTable` (`src/sstable.rs`): sorted segment files using the existing `Record` format. Sparse index (sampled every 64 keys) with `partition_point` binary search for fast offset-based lookups. BufReader for buffered I/O.
 - `LsmEngine` (`src/lsmengine.rs`): wires memtable + SSTable segments. Reads check memtable first (distinguishing tombstones from missing), then segments newest-to-oldest. Compaction merge-sorts all segments + memtable, drops tombstones.
