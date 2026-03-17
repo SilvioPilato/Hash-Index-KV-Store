@@ -1,5 +1,6 @@
-use hash_index::db::DB;
+use hash_index::engine::StorageEngine;
 use hash_index::hint::{Hint, HintEntry};
+use hash_index::kvengine::KVEngine;
 use hash_index::settings::FSyncStrategy;
 use std::fs;
 use std::path::PathBuf;
@@ -88,7 +89,7 @@ fn hint_read_empty_file() {
 #[test]
 fn compaction_produces_hint_files() {
     let path = temp_db_path("produces_hint");
-    let mut db = DB::new(
+    let mut db = KVEngine::new(
         &path,
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -101,7 +102,7 @@ fn compaction_produces_hint_files() {
     // Before compaction — no hint files (active segment never gets one)
     assert!(hint_files_in(&path).is_empty());
 
-    let _compacted = db.get_compacted().unwrap();
+    db.compact().unwrap();
 
     // After compaction — at least one .hint file should exist
     let hints = hint_files_in(&path);
@@ -112,7 +113,7 @@ fn compaction_produces_hint_files() {
 fn from_dir_loads_via_hint_files() {
     let path = temp_db_path("load_hint");
     {
-        let mut db = DB::new(
+        let mut db = KVEngine::new(
             &path,
             "test",
             DEFAULT_MAX_SEGMENT_BYTES,
@@ -122,14 +123,14 @@ fn from_dir_loads_via_hint_files() {
         db.set("k1", "v1").unwrap();
         db.set("k2", "v2").unwrap();
         db.set("k1", "updated").unwrap();
-        let _compacted = db.get_compacted().unwrap();
+        db.compact().unwrap();
     }
 
     // Hint files exist from compaction
     assert!(!hint_files_in(&path).is_empty());
 
     // Reopen — should load index from hint files
-    let db = DB::from_dir(
+    let db = KVEngine::from_dir(
         &path,
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -147,7 +148,7 @@ fn from_dir_loads_via_hint_files() {
 fn from_dir_falls_back_without_hint_files() {
     let path = temp_db_path("no_hint");
     {
-        let mut db = DB::new(
+        let mut db = KVEngine::new(
             &path,
             "test",
             DEFAULT_MAX_SEGMENT_BYTES,
@@ -156,7 +157,7 @@ fn from_dir_falls_back_without_hint_files() {
         .unwrap();
         db.set("k1", "v1").unwrap();
         db.set("k2", "v2").unwrap();
-        let _compacted = db.get_compacted().unwrap();
+        db.compact().unwrap();
     }
 
     // Delete all hint files to force fallback to full scan
@@ -166,7 +167,7 @@ fn from_dir_falls_back_without_hint_files() {
     assert!(hint_files_in(&path).is_empty());
 
     // Should still load correctly via full record scan
-    let db = DB::from_dir(
+    let db = KVEngine::from_dir(
         &path,
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -183,7 +184,7 @@ fn from_dir_falls_back_without_hint_files() {
 #[test]
 fn compaction_cleans_up_old_hint_files() {
     let path = temp_db_path("cleanup_hint");
-    let mut db = DB::new(
+    let mut db = KVEngine::new(
         &path,
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -193,13 +194,13 @@ fn compaction_cleans_up_old_hint_files() {
     db.set("k1", "v1").unwrap();
 
     // First compaction — produces hint file(s)
-    let mut compacted = db.get_compacted().unwrap();
+    db.compact().unwrap();
     let hints_after_first = hint_files_in(&path);
     assert!(!hints_after_first.is_empty());
 
     // Add more data, compact again
-    compacted.set("k2", "v2").unwrap();
-    let compacted2 = compacted.get_compacted().unwrap();
+    db.set("k2", "v2").unwrap();
+    db.compact().unwrap();
 
     // The old hint files should be gone, replaced by new one(s)
     let hints_after_second = hint_files_in(&path);
@@ -211,8 +212,8 @@ fn compaction_cleans_up_old_hint_files() {
     }
 
     // Data is still intact
-    let (_, v1) = compacted2.get("k1").unwrap().unwrap();
-    let (_, v2) = compacted2.get("k2").unwrap().unwrap();
+    let (_, v1) = db.get("k1").unwrap().unwrap();
+    let (_, v2) = db.get("k2").unwrap().unwrap();
     assert_eq!(v1, "v1");
     assert_eq!(v2, "v2");
 }
@@ -221,18 +222,18 @@ fn compaction_cleans_up_old_hint_files() {
 fn hint_files_with_multi_segment_compaction() {
     // Use tiny segment limit to force multiple segments, then compact
     let path = temp_db_path("multi_seg_hint");
-    let mut db = DB::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
+    let mut db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
     db.set("k3", "value_three").unwrap();
 
-    let _compacted = db.get_compacted().unwrap();
+    db.compact().unwrap();
 
     // Hint files should exist
     assert!(!hint_files_in(&path).is_empty());
 
     // Reopen from disk — loads via hints
-    let db2 = DB::from_dir(&path, "test", 50, FSyncStrategy::Always)
+    let db2 = KVEngine::from_dir(&path, "test", 50, FSyncStrategy::Always)
         .unwrap()
         .unwrap();
     let (_, v1) = db2.get("k1").unwrap().unwrap();

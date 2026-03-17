@@ -1,20 +1,38 @@
+# In Progress
+
 # Open Tasks
 
 ## #14 — Hardcoded port in integration tests
 
 Integration tests bind to a hardcoded port (`6666`). If anything else is using that port, tests fail. A more robust approach would be to bind to port 0, have the server report the assigned port, and have tests read it back.
 
-## #18 — Simple SSTable / sorted segments (DDIA Ch. 3)
-
-Implement a **sorted string table** segment format alongside (or replacing) the current hash-indexed one. Writes go to an in-memory balanced tree (memtable); when it reaches a size threshold it's flushed as a sorted segment file. Reads check the memtable first, then segments newest-to-oldest. This is the foundation of LSM-Trees (LevelDB, RocksDB) and the second major storage engine architecture in DDIA Ch. 3. Start minimal — a single sorted segment flush + merge — and layer on a Bloom filter (#19) later.
-
 ## #19 — Bloom filter for key existence (DDIA Ch. 3)
 
 Once there are multiple segments (from #16 or #18), checking every segment for a missing key is expensive. A per-segment **Bloom filter** lets you skip segments that definitely don't contain the key. Implementing one from scratch (bit array + k hash functions) is a good exercise in probabilistic data structures, directly referenced in DDIA's LSM-Tree discussion.
 
+## #25 — Memory-mapped I/O for SSTable reads
+
+Use `mmap` to memory-map SSTable files instead of reading via file I/O. Combined with a sparse index, lookups become pointer arithmetic + memcmp with no syscalls. Explore platform-specific considerations and safety tradeoffs.
+
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #18 — Simple SSTable / sorted segments (DDIA Ch. 3)
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/17 segment format as a second storage engine alongside the existing Bitcask-style KVEngine.
+
+**Architecture changes:**
+- Extracted `StorageEngine` trait (`src/engine.rs`) with `get`, `set`, `delete`, `compact` + `Send + Sync` supertraits.
+- Existing Bitcask DB renamed to `KVEngine` (`src/kvengine.rs`), implements `StorageEngine`.
+- Added `--engine kv|lsm` CLI flag; `main.rs` uses `Box<dyn StorageEngine>` for runtime polymorphism.
+
+**LSM implementation:**
+- `Memtable` (`src/memtable.rs`): in-memory `BTreeMap<String, Option<String>>` with size tracking, tombstones, flush threshold.
+- `SSTable` (`src/sstable.rs`): sorted segment files using the existing `Record` format. Sparse index (sampled every 64 keys) with `partition_point` binary search for fast offset-based lookups. BufReader for buffered I/O.
+- `LsmEngine` (`src/lsmengine.rs`): wires memtable + SSTable segments. Reads check memtable first (distinguishing tombstones from missing), then segments newest-to-oldest. Compaction merge-sorts all segments + memtable, drops tombstones.
+
+**Tests:** 36 new tests (13 memtable, 9 sstable, 14 lsmengine). Total: 83 tests passing.
 
 ## #23 — Background thread/timer infrastructure
 

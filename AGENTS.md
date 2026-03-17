@@ -4,9 +4,10 @@ This is a didactic Bitcask-style key-value store built while reading *Designing 
 
 ## Task Workflow
 
-- Tasks live in `TASKS.md` at the repo root, split into **Open Tasks** and **Closed Tasks**.
+- Tasks live in `TASKS.md` at the repo root, split into **In Progress**, **Open Tasks**, and **Closed Tasks**.
 - Before starting work, read `TASKS.md` and identify the relevant task number.
-- When a task is done, move its entire `## #N` section from **Open Tasks** to **Closed Tasks** — never delete it.
+- When starting a task, move its `## #N` section from **Open Tasks** to **In Progress**.
+- When a task is done, move its entire `## #N` section from **In Progress** to **Closed Tasks** — never delete it.
 - New tasks get the next sequential `#N` number.
 
 ## Git & PRs

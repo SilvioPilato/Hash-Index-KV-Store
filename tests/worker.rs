@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::{env, time::SystemTime};
 
-use hash_index::db::DB;
+use hash_index::engine::StorageEngine;
+use hash_index::kvengine::KVEngine;
 use hash_index::settings::FSyncStrategy;
 use hash_index::worker::BackgroundWorker;
 
@@ -71,7 +72,7 @@ fn worker_drop_returns_immediately() {
 fn periodic_fsync_db_writes_are_readable() {
     let path = temp_db_path("periodic_rw");
 
-    let mut db = DB::new(
+    let mut db = KVEngine::new(
         &path,
         "test",
         1_048_576,
@@ -89,7 +90,7 @@ fn periodic_fsync_survives_segment_roll() {
     let path = temp_db_path("periodic_roll");
 
     // Tiny segment size to force a roll
-    let mut db = DB::new(
+    let mut db = KVEngine::new(
         &path,
         "test",
         50,

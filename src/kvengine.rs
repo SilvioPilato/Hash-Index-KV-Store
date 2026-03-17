@@ -2,6 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, Seek, SeekFrom};
 use std::path::PathBuf;
 
+use crate::engine::StorageEngine;
 use crate::hash_index::HashIndex;
 use crate::hint::{Hint, HintEntry};
 use crate::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader};
@@ -9,7 +10,7 @@ use crate::segment::{Segment, get_segments};
 use crate::settings::FSyncStrategy;
 use crate::worker::BackgroundWorker;
 
-pub struct DB {
+pub struct KVEngine {
     index: HashIndex,
     active_file: File,
     db_path: String,
@@ -21,7 +22,7 @@ pub struct DB {
     fsync_handle: Option<BackgroundWorker>,
 }
 
-impl DB {
+impl KVEngine {
     /// Creates a new, empty database in the given directory.
     ///
     /// Creates `db_path` if it does not exist, opens a fresh segment file,
@@ -31,7 +32,7 @@ impl DB {
         db_name: &str,
         max_segment_bytes: u64,
         fsync_strategy: FSyncStrategy,
-    ) -> io::Result<DB> {
+    ) -> io::Result<KVEngine> {
         std::fs::create_dir_all(db_path)?;
         let segment = Segment::new(db_name).map_err(io::Error::other)?;
         let file: File = OpenOptions::new()
@@ -41,7 +42,7 @@ impl DB {
             .truncate(false)
             .open(segment.path(db_path))?;
         let fsync_handle = Self::spawn_fsync_worker(fsync_strategy, segment.path(db_path));
-        Ok(DB {
+        Ok(KVEngine {
             index: HashIndex::new(),
             active_file: file,
             db_path: db_path.to_string(),
@@ -67,7 +68,7 @@ impl DB {
         db_name: &str,
         max_segment_bytes: u64,
         fsync_strategy: FSyncStrategy,
-    ) -> Result<Option<DB>, Error> {
+    ) -> Result<Option<KVEngine>, Error> {
         let segments = match get_segments(db_dir, db_name) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -105,7 +106,7 @@ impl DB {
         }
         let segment = active_segment.unwrap().to_owned();
         let fsync_handle = Self::spawn_fsync_worker(fsync_strategy, segment.path(db_dir));
-        Ok(Some(DB {
+        Ok(Some(KVEngine {
             index: hash_index,
             active_file: current_file.unwrap(),
             db_path: db_dir.to_string(),
@@ -121,116 +122,11 @@ impl DB {
         }))
     }
 
-    /// Retrieves the key-value pair associated with the given key.
-    ///
-    /// Looks up the key in the in-memory index, seeks to the record's byte
-    /// offset in the appropriate segment file, and reads the full record
-    /// (verifying its CRC32 checksum).
-    ///
-    /// Returns `Ok(None)` if the key is not in the index.
-    pub fn get(&self, key: &str) -> Result<Option<(String, String)>, Error> {
-        let entry = match self.index.get(key) {
-            Some(o) => o,
-            None => return Ok(None),
-        };
-
-        let mut file = if entry.segment_timestamp == self.active_segment.timestamp {
-            self.active_file.try_clone()?
-        } else {
-            let segment = Segment {
-                segment_name: self.db_name.clone(),
-                timestamp: entry.segment_timestamp,
-            };
-            File::open(segment.path(&self.db_path))?
-        };
-
-        file.seek(SeekFrom::Start(entry.offset))?;
-
-        let record = Record::read_next(&mut file)?;
-
-        Ok(Some((record.key, record.value)))
-    }
-
-    /// Inserts or updates a key-value pair in the database.
-    ///
-    /// Appends a record to the active segment file and updates the in-memory
-    /// index. If the active segment would exceed `max_segment_bytes`, a new
-    /// segment is rolled first.
-    ///
-    /// Previous entries for the same key become dead bytes, reclaimable by
-    /// compaction.
-    pub fn set(&mut self, key: &str, value: &str) -> Result<(), Error> {
-        if key.len() > MAX_KEY_SIZE || value.len() > MAX_VALUE_SIZE {
-            return Err(Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "key or value exceeds maximum allowed size",
-            ));
-        }
-        let record = Record {
-            header: RecordHeader {
-                crc32: 0u32,
-                key_size: key.len() as u64,
-                value_size: value.len() as u64,
-                tombstone: false,
-            },
-            key: key.to_string(),
-            value: value.to_string(),
-        };
-
-        let seg_size = self.active_file.seek(SeekFrom::End(0))?;
-
-        if self.max_segment_bytes < seg_size + record.size_on_disk() {
-            self.roll_segment()?;
-        }
-        let mut file = self.active_file.try_clone()?;
-        let offset = record.append(&mut file)?;
-        self.index
-            .set(key.to_string(), offset, self.active_segment.timestamp);
-        self.fsync()?;
-
-        Ok(())
-    }
-
-    /// Deletes a key from the database.
-    ///
-    /// Removes the key from the in-memory index and appends a tombstone
-    /// record to the active segment. Returns `Ok(None)` if the key was not
-    /// present.
-    pub fn delete(&mut self, key: &str) -> Result<Option<()>, Error> {
-        if key.len() > MAX_KEY_SIZE {
-            return Err(Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "key or value exceeds maximum allowed size",
-            ));
-        }
-        let mut file = self.active_file.try_clone()?;
-        match self.index.delete(key) {
-            Some(_) => {
-                let record = Record {
-                    header: RecordHeader {
-                        crc32: 0u32,
-                        key_size: key.len() as u64,
-                        value_size: 0,
-                        tombstone: true,
-                    },
-                    key: key.to_string(),
-                    value: String::new(),
-                };
-                record.append(&mut file)?;
-                self.fsync()?;
-                Ok(Some(()))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Compacts the database by rewriting only live key-value pairs into
-    /// fresh segments, then deleting the old segment and hint files.
-    ///
-    /// Returns a new `DB` instance backed by the compacted segments.
-    pub fn get_compacted(&self) -> Result<DB, Error> {
+    /// Builds a compacted KVEngine from the current state, returning
+    /// the new engine without modifying self.
+    fn build_compacted(&self) -> Result<KVEngine, Error> {
         let old_segments = get_segments(&self.db_path, &self.db_name)?;
-        let mut new_db = DB::new(
+        let mut new_db = KVEngine::new(
             &self.db_path,
             &self.db_name,
             self.max_segment_bytes,
@@ -339,5 +235,122 @@ impl DB {
         }
 
         Ok(())
+    }
+}
+
+impl StorageEngine for KVEngine {
+    /// Compacts the database by rewriting only live key-value pairs into
+    /// fresh segments, then deleting the old segment and hint files.
+    fn compact(&mut self) -> Result<(), Error> {
+        let new_db = self.build_compacted()?;
+        self.index = new_db.index;
+        self.active_file = new_db.active_file;
+        self.active_segment = new_db.active_segment;
+        self.writes_since_fsync = new_db.writes_since_fsync;
+        self.fsync_handle = new_db.fsync_handle;
+        Ok(())
+    }
+
+    /// Retrieves the key-value pair associated with the given key.
+    ///
+    /// Looks up the key in the in-memory index, seeks to the record's byte
+    /// offset in the appropriate segment file, and reads the full record
+    /// (verifying its CRC32 checksum).
+    ///
+    /// Returns `Ok(None)` if the key is not in the index.
+    fn get(&self, key: &str) -> Result<Option<(String, String)>, Error> {
+        let entry = match self.index.get(key) {
+            Some(o) => o,
+            None => return Ok(None),
+        };
+
+        let mut file = if entry.segment_timestamp == self.active_segment.timestamp {
+            self.active_file.try_clone()?
+        } else {
+            let segment = Segment {
+                segment_name: self.db_name.clone(),
+                timestamp: entry.segment_timestamp,
+            };
+            File::open(segment.path(&self.db_path))?
+        };
+
+        file.seek(SeekFrom::Start(entry.offset))?;
+
+        let record = Record::read_next(&mut file)?;
+
+        Ok(Some((record.key, record.value)))
+    }
+
+    /// Inserts or updates a key-value pair in the database.
+    ///
+    /// Appends a record to the active segment file and updates the in-memory
+    /// index. If the active segment would exceed `max_segment_bytes`, a new
+    /// segment is rolled first.
+    ///
+    /// Previous entries for the same key become dead bytes, reclaimable by
+    /// compaction.
+    fn set(&mut self, key: &str, value: &str) -> Result<(), Error> {
+        if key.len() > MAX_KEY_SIZE || value.len() > MAX_VALUE_SIZE {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "key or value exceeds maximum allowed size",
+            ));
+        }
+        let record = Record {
+            header: RecordHeader {
+                crc32: 0u32,
+                key_size: key.len() as u64,
+                value_size: value.len() as u64,
+                tombstone: false,
+            },
+            key: key.to_string(),
+            value: value.to_string(),
+        };
+
+        let seg_size = self.active_file.seek(SeekFrom::End(0))?;
+
+        if self.max_segment_bytes < seg_size + record.size_on_disk() {
+            self.roll_segment()?;
+        }
+        let mut file = self.active_file.try_clone()?;
+        let offset = record.append(&mut file)?;
+        self.index
+            .set(key.to_string(), offset, self.active_segment.timestamp);
+        self.fsync()?;
+
+        Ok(())
+    }
+
+    /// Deletes a key from the database.
+    ///
+    /// Removes the key from the in-memory index and appends a tombstone
+    /// record to the active segment. Returns `Ok(None)` if the key was not
+    /// present.
+    fn delete(&mut self, key: &str) -> Result<Option<()>, Error> {
+        if key.len() > MAX_KEY_SIZE {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "key or value exceeds maximum allowed size",
+            ));
+        }
+        let mut file = self.active_file.try_clone()?;
+        match self.index.delete(key) {
+            Some(_) => {
+                let record = Record {
+                    header: RecordHeader {
+                        crc32: 0u32,
+                        key_size: key.len() as u64,
+                        value_size: 0,
+                        tombstone: true,
+                    },
+                    key: key.to_string(),
+                    value: String::new(),
+                };
+                record.append(&mut file)?;
+                self.fsync()?;
+                Ok(Some(()))
+            }
+            None => Ok(None),
+        }
     }
 }
