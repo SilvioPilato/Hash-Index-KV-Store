@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions, read_dir},
-    io::{self, BufReader, Seek},
+    io::{self, BufReader, ErrorKind, Seek},
     path::PathBuf,
     time::SystemTime,
 };
@@ -28,10 +28,14 @@ pub struct SSTableIter {
 }
 
 impl Iterator for SSTableIter {
-    type Item = Record;
+    type Item = io::Result<Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Record::read_next(&mut self.file).ok()
+        match Record::read_next(&mut self.file) {
+            Ok(record) => Some(Ok(record)),
+            Err(e) if e.kind() == ErrorKind::UnexpectedEof => None,
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
@@ -97,7 +101,8 @@ impl SSTable {
 
         let iter = SSTableIter { file: reader };
 
-        for record in iter {
+        for result in iter {
+            let record = result?;
             match record.key.as_str().cmp(key) {
                 std::cmp::Ordering::Greater => return Ok(None),
                 std::cmp::Ordering::Equal => {
@@ -155,7 +160,8 @@ impl SSTable {
                     keys.push(record.key);
                     i += 1;
                 }
-                Err(_) => break,
+                Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e),
             }
         }
         let bloom_bytes = (keys.len() * BLOOM_BITS_PER_KEY).div_ceil(8);

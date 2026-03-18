@@ -1,6 +1,6 @@
 use hash_index::memtable::Memtable;
 use hash_index::sstable::{SSTable, get_sstables};
-use std::{env, fs, time::SystemTime};
+use std::{env, fs, io::ErrorKind, time::SystemTime};
 
 fn temp_dir(suffix: &str) -> String {
     let nanos = SystemTime::now()
@@ -59,7 +59,7 @@ fn iter_returns_sorted_records() {
     let mt = make_memtable(&[("cherry", "3"), ("apple", "1"), ("banana", "2")]);
     let sst = SSTable::from_memtable(&dir, "test", &mt).unwrap();
 
-    let keys: Vec<String> = sst.iter().unwrap().map(|r| r.key).collect();
+    let keys: Vec<String> = sst.iter().unwrap().map(|r| r.unwrap().key).collect();
     assert_eq!(keys, vec!["apple", "banana", "cherry"]);
 }
 
@@ -118,4 +118,72 @@ fn get_sstables_filters_by_name() {
 
     let beta_tables = get_sstables(&dir, "beta").unwrap();
     assert_eq!(beta_tables.len(), 1);
+}
+
+// Corrupt the byte at `offset` in the file at `path` by flipping all its bits.
+fn corrupt_byte(path: &std::path::Path, offset: u64) {
+    let mut data = fs::read(path).unwrap();
+    data[offset as usize] ^= 0xFF;
+    fs::write(path, data).unwrap();
+}
+
+#[test]
+fn iter_propagates_crc_error() {
+    let dir = temp_dir("iter_crc_error");
+    let mt = make_memtable(&[("apple", "1"), ("banana", "2"), ("cherry", "3")]);
+    let sst = SSTable::from_memtable(&dir, "test", &mt).unwrap();
+
+    // Corrupt the first byte of the key payload (offset 21 = after the 21-byte header).
+    // This triggers a CRC mismatch rather than a size-limit error.
+    corrupt_byte(&sst.path, 21);
+
+    let results: Vec<_> = sst.iter().unwrap().collect();
+    assert!(
+        results.iter().any(|r| r.is_err()),
+        "expected at least one Err from a corrupt record"
+    );
+    let err = results
+        .iter()
+        .find(|r| r.is_err())
+        .unwrap()
+        .as_ref()
+        .unwrap_err();
+    assert_eq!(
+        err.kind(),
+        ErrorKind::InvalidData,
+        "expected CRC mismatch error"
+    );
+}
+
+#[test]
+fn get_propagates_crc_error() {
+    let dir = temp_dir("get_crc_error");
+    let mt = make_memtable(&[("apple", "1"), ("banana", "2")]);
+    let sst = SSTable::from_memtable(&dir, "test", &mt).unwrap();
+
+    // Corrupt the first byte of the key payload (offset 21 = after the 21-byte header).
+    corrupt_byte(&sst.path, 21);
+
+    // Searching for "banana" (second record) requires scanning past the corrupt first record.
+    let result = sst.get("banana");
+    assert!(
+        result.is_err(),
+        "expected Err when corrupt record is in scan path"
+    );
+    assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidData);
+}
+
+#[test]
+fn iter_clean_eof_yields_none() {
+    let dir = temp_dir("iter_eof");
+    let mt = make_memtable(&[("k", "v")]);
+    let sst = SSTable::from_memtable(&dir, "test", &mt).unwrap();
+
+    // Iterator should yield exactly one record then stop cleanly (None), not an error.
+    let mut iter = sst.iter().unwrap();
+    assert!(iter.next().unwrap().is_ok());
+    assert!(
+        iter.next().is_none(),
+        "expected clean EOF after last record"
+    );
 }
