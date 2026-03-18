@@ -1,9 +1,5 @@
 # In Progress
 
-## #45 — WRITE command loses whitespace fidelity
-
-The `parse_message` function uses `split_whitespace` + `join(" ")` to reconstruct the value. This collapses consecutive spaces, tabs, and other whitespace into single spaces. For example, `WRITE key hello··world` (two spaces) stores `"hello world"` (one space). Fix by locating the value substring in the original input rather than splitting and re-joining.
-
 # Open Tasks
 
 ## #14 — Hardcoded port in integration tests
@@ -96,7 +92,11 @@ Add a TCP command that dumps internal storage state: segment file listing, index
 
 # Closed Tasks
 
-<!-- Move completed tasks here to keep a reference of what was done. -->
+## #45 — WRITE command loses whitespace fidelity
+
+The `parse_message` function uses `split_whitespace` + `join(" ")` to reconstruct the value. This collapses consecutive spaces, tabs, and other whitespace into single spaces. For example, `WRITE key hello··world` (two spaces) stores `"hello world"` (one space). Fix by locating the value substring in the original input rather than splitting and re-joining.
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/20
 
 ## #44 — SSTableIter silently swallows all errors
 
