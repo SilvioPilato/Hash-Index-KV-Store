@@ -1,9 +1,5 @@
 # In Progress
 
-## #44 — SSTableIter silently swallows all errors
-
-`SSTableIter::next()` uses `.ok()` which converts **all** I/O and CRC errors into `None` (treated as EOF). This means corrupt records, CRC mismatches, and I/O failures are silently ignored. During `get()`, a corrupt record before the target key ends the scan early, returning "not found" even if the key exists. During `compact()`, corrupt records are silently dropped, causing **data loss**. The CRC32 integrity verification is effectively defeated for the entire LSM engine. The iterator should propagate errors instead of swallowing them.
-
 # Open Tasks
 
 ## #14 — Hardcoded port in integration tests
@@ -101,6 +97,12 @@ The `parse_message` function uses `split_whitespace` + `join(" ")` to reconstruc
 # Closed Tasks
 
 <!-- Move completed tasks here to keep a reference of what was done. -->
+
+## #44 — SSTableIter silently swallows all errors
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/19
+
+`SSTableIter::next()` uses `.ok()` which converts **all** I/O and CRC errors into `None` (treated as EOF). This means corrupt records, CRC mismatches, and I/O failures are silently ignored. During `get()`, a corrupt record before the target key ends the scan early, returning "not found" even if the key exists. During `compact()`, corrupt records are silently dropped, causing **data loss**. The CRC32 integrity verification is effectively defeated for the entire LSM engine. The iterator should propagate errors instead of swallowing them.
 
 ## #19 — Bloom filter for key existence (DDIA Ch. 3)
 
