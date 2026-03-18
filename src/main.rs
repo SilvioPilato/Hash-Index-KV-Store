@@ -199,8 +199,11 @@ fn parse_message(message: &str) -> Command {
 
     match words[0].to_uppercase().as_str() {
         "WRITE" => {
-            if words.len() > 2 {
-                Command::Write(words[1].to_string(), words[2..].join(" "))
+            let rest = message["WRITE".len()..].trim_start();
+            if let Some(i) = rest.find(char::is_whitespace) {
+                let key = &rest[..i];
+                let value_start = i + rest[i..].char_indices().nth(1).map_or(0, |(j, _)| j);
+                Command::Write(key.to_string(), rest[value_start..].to_string())
             } else {
                 Command::Invalid(message.to_string())
             }

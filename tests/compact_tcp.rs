@@ -98,3 +98,42 @@ fn compact_command_over_tcp() {
     wait_for_compaction();
     assert_eq!(send_command("READ k1"), "v1");
 }
+
+#[test]
+fn write_preserves_multiple_spaces_in_value() {
+    let _guard = test_lock().lock().unwrap();
+    let db_path = temp_db_path("spaces");
+
+    let _server = ServerProcess::start(&db_path);
+
+    wait_for_server();
+
+    assert_eq!(send_command("WRITE key hello  world"), "OK");
+    assert_eq!(send_command("READ key"), "hello  world");
+}
+
+#[test]
+fn write_preserves_leading_and_trailing_spaces_in_value() {
+    let _guard = test_lock().lock().unwrap();
+    let db_path = temp_db_path("leading_trailing");
+
+    let _server = ServerProcess::start(&db_path);
+
+    wait_for_server();
+
+    assert_eq!(send_command("WRITE key  leading"), "OK");
+    assert_eq!(send_command("READ key"), " leading");
+}
+
+#[test]
+fn write_preserves_tab_in_value() {
+    let _guard = test_lock().lock().unwrap();
+    let db_path = temp_db_path("tabs");
+
+    let _server = ServerProcess::start(&db_path);
+
+    wait_for_server();
+
+    assert_eq!(send_command("WRITE key hello\tworld"), "OK");
+    assert_eq!(send_command("READ key"), "hello\tworld");
+}
