@@ -84,7 +84,8 @@ impl StorageEngine for LsmEngine {
     fn compact(&mut self) -> Result<(), std::io::Error> {
         let mut memtable = Memtable::new();
         for segment in self.segments.iter() {
-            for record in segment.iter()? {
+            for result in segment.iter()? {
+                let record = result?;
                 if record.header.tombstone {
                     memtable.remove(record.key);
                 } else {

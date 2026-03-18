@@ -1,5 +1,9 @@
 # In Progress
 
+## #44 — SSTableIter silently swallows all errors
+
+`SSTableIter::next()` uses `.ok()` which converts **all** I/O and CRC errors into `None` (treated as EOF). This means corrupt records, CRC mismatches, and I/O failures are silently ignored. During `get()`, a corrupt record before the target key ends the scan early, returning "not found" even if the key exists. During `compact()`, corrupt records are silently dropped, causing **data loss**. The CRC32 integrity verification is effectively defeated for the entire LSM engine. The iterator should propagate errors instead of swallowing them.
+
 # Open Tasks
 
 ## #14 — Hardcoded port in integration tests
@@ -57,6 +61,42 @@ Extend `Stats` to track per-operation latency distributions (p50/p95/p99). Imple
 ## #37 — Crash-recovery and fault-injection tests
 
 Write tests that simulate crashes mid-write and mid-compaction (e.g., truncated files, partial records, missing hint files) and verify the engine recovers correctly. Validates the durability guarantees of both engines and exercises the CRC integrity checks.
+
+## #38 — `--help` usage message
+
+Running `cargo run` with no arguments currently panics. Add a proper `--help` / usage banner that lists all flags with descriptions and defaults, making the first-run experience clear.
+
+## #39 — `LIST` command
+
+There is currently no way to see what keys exist. Wire a `LIST` TCP command through the `StorageEngine` trait. `KVEngine` already has `ls_keys()` via `HashIndex`; `Memtable` has `entries()` for the LSM side. Return all keys to the client.
+
+## #40 — Engine info in `STATS` output
+
+Extend the `STATS` command to include which engine is active, segment count, total data size on disk, and (for LSM) current memtable size. Makes the storage internals visible during interactive exploration.
+
+## #41 — CLI client (`kvcli`)
+
+Add a `cargo run --bin kvcli` binary that connects to the server and provides a REPL-style interface for sending commands. Avoids the netcat "blank line after each command" friction and provides a nicer interactive experience.
+
+## #42 — Load generator / benchmark tool (`kvbench`)
+
+Add a `cargo run --bin kvbench` binary that writes N random keys, reads them back, and prints throughput and latency stats. The key value: run it against `--engine kv` then `--engine lsm` to compare and make the write-amplification and read-amplification tradeoffs from DDIA Ch. 3 tangible.
+
+## #43 — `DBINFO` command
+
+Add a TCP command that dumps internal storage state: segment file listing, index size, bloom filter stats (estimated false positive rate), hint file presence, sparse index entry count. Lets you observe compaction shrinking segments and see the sparse index in action.
+
+## #45 — WRITE command loses whitespace fidelity
+
+The `parse_message` function uses `split_whitespace` + `join(" ")` to reconstruct the value. This collapses consecutive spaces, tabs, and other whitespace into single spaces. For example, `WRITE key hello··world` (two spaces) stores `"hello world"` (one space). Fix by locating the value substring in the original input rather than splitting and re-joining.
+
+## #46 — Concurrent `get()` races on shared file offset (Unix/Linux)
+
+`KVEngine::get()` uses `try_clone()` on the active file for reads. On Unix/Linux, `dup()` shares the file offset across cloned descriptors, so concurrent readers (allowed by `RwLock::read()`) race on seek+read. This doesn't manifest on Windows (independent offsets via `DuplicateHandle`) but would corrupt reads on Linux. Fix by using `File::open()` for read paths instead of `try_clone()`.
+
+## #47 — `LsmEngine::delete` always returns `Some(())`
+
+`LsmEngine::delete` unconditionally returns `Ok(Some(()))` regardless of whether the key existed. The KV engine correctly returns `None` for missing keys, so the TCP server says `"OK"` vs `"Not found"` accordingly. The LSM engine always says `"OK"`. Not a data-correctness issue (tombstone for a nonexistent key is harmless), but a protocol-level inconsistency. Fix by checking the memtable and segments before returning.
 
 # Closed Tasks
 
