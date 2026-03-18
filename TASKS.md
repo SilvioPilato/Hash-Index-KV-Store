@@ -82,10 +82,6 @@ Add a `cargo run --bin kvbench` binary that writes N random keys, reads them bac
 
 Add a TCP command that dumps internal storage state: segment file listing, index size, bloom filter stats (estimated false positive rate), hint file presence, sparse index entry count. Lets you observe compaction shrinking segments and see the sparse index in action.
 
-## #45 — WRITE command loses whitespace fidelity
-
-The `parse_message` function uses `split_whitespace` + `join(" ")` to reconstruct the value. This collapses consecutive spaces, tabs, and other whitespace into single spaces. For example, `WRITE key hello··world` (two spaces) stores `"hello world"` (one space). Fix by locating the value substring in the original input rather than splitting and re-joining.
-
 ## #46 — Concurrent `get()` races on shared file offset (Unix/Linux)
 
 `KVEngine::get()` uses `try_clone()` on the active file for reads. On Unix/Linux, `dup()` shares the file offset across cloned descriptors, so concurrent readers (allowed by `RwLock::read()`) race on seek+read. This doesn't manifest on Windows (independent offsets via `DuplicateHandle`) but would corrupt reads on Linux. Fix by using `File::open()` for read paths instead of `try_clone()`.
@@ -96,7 +92,11 @@ The `parse_message` function uses `split_whitespace` + `join(" ")` to reconstruc
 
 # Closed Tasks
 
-<!-- Move completed tasks here to keep a reference of what was done. -->
+## #45 — WRITE command loses whitespace fidelity
+
+The `parse_message` function uses `split_whitespace` + `join(" ")` to reconstruct the value. This collapses consecutive spaces, tabs, and other whitespace into single spaces. For example, `WRITE key hello··world` (two spaces) stores `"hello world"` (one space). Fix by locating the value substring in the original input rather than splitting and re-joining.
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/20
 
 ## #44 — SSTableIter silently swallows all errors
 
