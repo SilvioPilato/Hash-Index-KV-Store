@@ -265,7 +265,7 @@ impl StorageEngine for KVEngine {
         };
 
         let mut file = if entry.segment_timestamp == self.active_segment.timestamp {
-            self.active_file.try_clone()?
+            File::open(self.active_segment.path(&self.db_path))?
         } else {
             let segment = Segment {
                 segment_name: self.db_name.clone(),
