@@ -90,6 +90,8 @@ Add a TCP command that dumps internal storage state: segment file listing, index
 
 ## #46 — Concurrent `get()` races on shared file offset (Unix/Linux)
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/21
+
 `KVEngine::get()` uses `try_clone()` on the active file for reads. On Unix/Linux, `dup()` shares the file offset across cloned descriptors, so concurrent readers (allowed by `RwLock::read()`) race on seek+read. Fixed by using `File::open()` for the active-segment read path instead of `try_clone()`, giving each reader an independent file descriptor. Added a concurrent-reads stress test (8 threads × 200 iterations × 100 keys) that exposed the race on Windows too.
 
 ## #45 — WRITE command loses whitespace fidelity
