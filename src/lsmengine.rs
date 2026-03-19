@@ -70,6 +70,9 @@ impl StorageEngine for LsmEngine {
     }
 
     fn delete(&mut self, key: &str) -> Result<Option<()>, std::io::Error> {
+        // Check if key exists
+        let exists = self.get(key)?.is_some();
+
         self.memtable.remove(key.to_string());
 
         if self.memtable.size_bytes() >= self.max_memtable_bytes {
@@ -78,7 +81,7 @@ impl StorageEngine for LsmEngine {
             self.memtable.clear();
         }
 
-        Ok(Some(()))
+        if exists { Ok(Some(())) } else { Ok(None) }
     }
 
     fn compact(&mut self) -> Result<(), std::io::Error> {

@@ -2,10 +2,6 @@
 
 # Open Tasks
 
-## #14 — Hardcoded port in integration tests
-
-Integration tests currently use a hardcoded TCP port, which causes failures when tests run in parallel or on CI where the port may already be in use. Switch to port 0 (OS-assigned) so the OS picks an available port, and have the test read back the actual bound address. Quick hygiene fix.
-
 ## #25 — WAL (Write-Ahead Log) for the LSM memtable (DDIA Ch. 3)
 
 The LSM engine's memtable is currently volatile — a crash before flush loses all in-flight writes. Add a write-ahead log that persists every write before applying it to the memtable, and replays uncommitted entries on startup. This is a core LSM-tree concept directly from DDIA's discussion of log-structured storage.
@@ -58,10 +54,6 @@ Extend `Stats` to track per-operation latency distributions (p50/p95/p99). Imple
 
 Write tests that simulate crashes mid-write and mid-compaction (e.g., truncated files, partial records, missing hint files) and verify the engine recovers correctly. Validates the durability guarantees of both engines and exercises the CRC integrity checks.
 
-## #38 — `--help` usage message
-
-Running `cargo run` with no arguments currently panics. Add a proper `--help` / usage banner that lists all flags with descriptions and defaults, making the first-run experience clear.
-
 ## #39 — `LIST` command
 
 There is currently no way to see what keys exist. Wire a `LIST` TCP command through the `StorageEngine` trait. `KVEngine` already has `ls_keys()` via `HashIndex`; `Memtable` has `entries()` for the LSM side. Return all keys to the client.
@@ -82,11 +74,25 @@ Add a `cargo run --bin kvbench` binary that writes N random keys, reads them bac
 
 Add a TCP command that dumps internal storage state: segment file listing, index size, bloom filter stats (estimated false positive rate), hint file presence, sparse index entry count. Lets you observe compaction shrinking segments and see the sparse index in action.
 
+# Closed Tasks
+
+## #14 — Hardcoded port in integration tests
+
+Integration tests now use OS-assigned port 0. Server writes actual bound address to a file that tests read back, with proper address conversion (0.0.0.0 → 127.0.0.1) for client connectivity. Thread-local storage and mutex poisoning recovery for reliable test execution.
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/22
+
 ## #47 — `LsmEngine::delete` always returns `Some(())`
 
-`LsmEngine::delete` unconditionally returns `Ok(Some(()))` regardless of whether the key existed. The KV engine correctly returns `None` for missing keys, so the TCP server says `"OK"` vs `"Not found"` accordingly. The LSM engine always says `"OK"`. Not a data-correctness issue (tombstone for a nonexistent key is harmless), but a protocol-level inconsistency. Fix by checking the memtable and segments before returning.
+Fixed `LsmEngine::delete` to return `Ok(None)` for nonexistent keys (matching KV engine behavior), not always `Ok(Some(()))`. Protocol consistency so TCP server says "Not found" for missing keys instead of always "OK". Updated corresponding test.
 
-# Closed Tasks
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/22
+
+## #38 — `--help` usage message
+
+Added proper help banner to `Settings::print_help()` that lists all CLI flags with descriptions and defaults. Running with no arguments or `-h/--help` displays usage instead of panicking.
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/22
 
 ## #46 — Concurrent `get()` races on shared file offset (Unix/Linux)
 

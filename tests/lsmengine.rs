@@ -55,7 +55,7 @@ fn delete_nonexistent_key() {
     let dir = temp_dir("delete_missing");
     let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE);
     let result = engine.delete("nope").unwrap();
-    assert_eq!(result, Some(()));
+    assert_eq!(result, None);
 }
 
 #[test]

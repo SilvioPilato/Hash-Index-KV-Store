@@ -29,8 +29,15 @@ pub struct Settings {
 
 impl Settings {
     pub fn get_from_args() -> Settings {
-        let f_path = env::args().nth(1).expect("No destination file given");
-        let mut args = env::args().skip(2);
+        let args: Vec<String> = env::args().collect();
+
+        if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
+            Self::print_help(&args[0]);
+            std::process::exit(0);
+        }
+
+        let f_path = args[1].clone();
+        let mut args_iter = args.iter().skip(2);
         let mut settings = Settings {
             db_file_path: f_path,
             tcp_addr: "0.0.0.0:6666".to_string(),
@@ -39,34 +46,34 @@ impl Settings {
             sync_strategy: FSyncStrategy::Always,
             engine: EngineType::KV,
         };
-        while let Some(arg) = args.next() {
+        while let Some(arg) = args_iter.next() {
             match arg.as_str() {
                 "-t" | "--tcp" => {
-                    if let Some(value) = args.next() {
+                    if let Some(value) = args_iter.next() {
                         let addr: SocketAddr = value.parse().expect("Invalid tcp address provided");
                         settings.tcp_addr = addr.to_string();
                     }
                 }
                 "-n" | "--name" => {
-                    if let Some(value) = args.next() {
+                    if let Some(value) = args_iter.next() {
                         settings.db_name = value.to_string();
                     }
                 }
                 "-msb" | "--max-segments-bytes" => {
-                    if let Some(value) = args.next() {
+                    if let Some(value) = args_iter.next() {
                         let bytes: u64 =
                             value.parse().expect("Invalid max segments bytes provided");
                         settings.max_segment_bytes = bytes;
                     }
                 }
                 "-fsync" | "--fsync-interval" => {
-                    if let Some(value) = args.next() {
-                        settings.sync_strategy = Settings::parse_fsync(&value).unwrap();
+                    if let Some(value) = args_iter.next() {
+                        settings.sync_strategy = Settings::parse_fsync(value).unwrap();
                     }
                 }
                 "-e" | "--engine" => {
-                    if let Some(value) = args.next() {
-                        settings.engine = Settings::parse_engine(&value).unwrap();
+                    if let Some(value) = args_iter.next() {
+                        settings.engine = Settings::parse_engine(value).unwrap();
                     }
                 }
                 _ => println!("Unknown argument: {}", arg),
@@ -74,6 +81,26 @@ impl Settings {
         }
 
         settings
+    }
+
+    fn print_help(prog_name: &str) {
+        println!("Usage: {} <db_path> [OPTIONS]", prog_name);
+        println!();
+        println!("ARGUMENTS:");
+        println!("  <db_path>              Path to the database directory");
+        println!();
+        println!("OPTIONS:");
+        println!("  -t, --tcp <ADDR>       TCP bind address (default: 0.0.0.0:6666)");
+        println!("  -n, --name <NAME>      Database name prefix (default: segment)");
+        println!("  -msb, --max-segments-bytes <BYTES>");
+        println!("                         Max bytes per segment (default: 52428800)");
+        println!("  -fsync, --fsync-interval <POLICY>");
+        println!(
+            "                         Fsync strategy: 'always', 'never', 'every:N', 'every:Ns'"
+        );
+        println!("                         (default: always)");
+        println!("  -e, --engine <ENGINE>  Storage engine: 'kv' or 'lsm' (default: kv)");
+        println!("  -h, --help             Print this help message");
     }
     fn parse_fsync(s: &str) -> Result<FSyncStrategy, String> {
         match s {
