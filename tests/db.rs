@@ -1,7 +1,12 @@
 use hash_index::engine::StorageEngine;
 use hash_index::kvengine::KVEngine;
 use hash_index::settings::FSyncStrategy;
-use std::{env, time::SystemTime};
+use std::{
+    env,
+    sync::{Arc, RwLock},
+    thread,
+    time::SystemTime,
+};
 
 const DEFAULT_MAX_SEGMENT_BYTES: u64 = 1_048_576 * 50;
 
@@ -243,4 +248,60 @@ fn sync_every_n_compaction_preserves_data() {
     let (_, v2) = db.get("k2").unwrap().unwrap();
     assert_eq!(v1, "updated");
     assert_eq!(v2, "value_two");
+}
+
+#[test]
+fn concurrent_reads_return_correct_values() {
+    let mut db = KVEngine::new(
+        &temp_db_path("concurrent_reads"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+
+    // Write keys with varying value sizes so records land at different offsets.
+    // Offset spread is what causes interleaved seek+read to corrupt results on
+    // Linux where try_clone() / dup() shares the file offset across clones.
+    let num_keys = 100usize;
+    for i in 0..num_keys {
+        let key = format!("key_{i:03}");
+        let value = format!("value_{}", "x".repeat(i % 64 + 1));
+        db.set(&key, &value).unwrap();
+    }
+
+    let expected: Arc<Vec<(String, String)>> = Arc::new(
+        (0..num_keys)
+            .map(|i| {
+                let key = format!("key_{i:03}");
+                let value = format!("value_{}", "x".repeat(i % 64 + 1));
+                (key, value)
+            })
+            .collect(),
+    );
+
+    let db = Arc::new(RwLock::new(db));
+
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let expected = Arc::clone(&expected);
+            thread::spawn(move || {
+                for _ in 0..200 {
+                    for (key, expected_value) in expected.iter() {
+                        let guard = db.read().unwrap();
+                        let (_, actual) = guard.get(key).unwrap().unwrap();
+                        assert_eq!(
+                            actual, *expected_value,
+                            "concurrent read returned wrong value for key '{key}'"
+                        );
+                    }
+                }
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
 }
