@@ -60,7 +60,22 @@ fn main() -> io::Result<()> {
 
     let db_handle: Arc<RwLock<Box<dyn StorageEngine>>> = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());
-    let listener = TcpListener::bind(&settings.tcp_addr).unwrap();
+    let listener = TcpListener::bind(&settings.tcp_addr)?;
+    let actual_addr = listener.local_addr()?;
+
+    // Convert 0.0.0.0 to 127.0.0.1 for client connections
+    let connect_addr = match actual_addr {
+        std::net::SocketAddr::V4(addr) if addr.ip().is_unspecified() => std::net::SocketAddr::V4(
+            std::net::SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, addr.port()),
+        ),
+        std::net::SocketAddr::V6(addr) if addr.ip().is_unspecified() => std::net::SocketAddr::V6(
+            std::net::SocketAddrV6::new(std::net::Ipv6Addr::LOCALHOST, addr.port(), 0, 0),
+        ),
+        _ => actual_addr,
+    };
+
+    let addr_file = format!("{}/server.addr", settings.db_file_path);
+    std::fs::write(&addr_file, connect_addr.to_string())?;
 
     for stream in listener.incoming() {
         match stream {

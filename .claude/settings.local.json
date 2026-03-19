@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo test:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(cargo build:*)",
+      "Bash(exec bash:*)"
+    ]
+  }
+}
