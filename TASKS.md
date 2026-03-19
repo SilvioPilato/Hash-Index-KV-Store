@@ -82,15 +82,17 @@ Add a `cargo run --bin kvbench` binary that writes N random keys, reads them bac
 
 Add a TCP command that dumps internal storage state: segment file listing, index size, bloom filter stats (estimated false positive rate), hint file presence, sparse index entry count. Lets you observe compaction shrinking segments and see the sparse index in action.
 
-## #46 — Concurrent `get()` races on shared file offset (Unix/Linux)
-
-`KVEngine::get()` uses `try_clone()` on the active file for reads. On Unix/Linux, `dup()` shares the file offset across cloned descriptors, so concurrent readers (allowed by `RwLock::read()`) race on seek+read. This doesn't manifest on Windows (independent offsets via `DuplicateHandle`) but would corrupt reads on Linux. Fix by using `File::open()` for read paths instead of `try_clone()`.
-
 ## #47 — `LsmEngine::delete` always returns `Some(())`
 
 `LsmEngine::delete` unconditionally returns `Ok(Some(()))` regardless of whether the key existed. The KV engine correctly returns `None` for missing keys, so the TCP server says `"OK"` vs `"Not found"` accordingly. The LSM engine always says `"OK"`. Not a data-correctness issue (tombstone for a nonexistent key is harmless), but a protocol-level inconsistency. Fix by checking the memtable and segments before returning.
 
 # Closed Tasks
+
+## #46 — Concurrent `get()` races on shared file offset (Unix/Linux)
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/21
+
+`KVEngine::get()` uses `try_clone()` on the active file for reads. On Unix/Linux, `dup()` shares the file offset across cloned descriptors, so concurrent readers (allowed by `RwLock::read()`) race on seek+read. Fixed by using `File::open()` for the active-segment read path instead of `try_clone()`, giving each reader an independent file descriptor. Added a concurrent-reads stress test (8 threads × 200 iterations × 100 keys) that exposed the race on Windows too.
 
 ## #45 — WRITE command loses whitespace fidelity
 
