@@ -25,6 +25,8 @@ pub struct Settings {
     pub max_segment_bytes: u64,
     pub sync_strategy: FSyncStrategy,
     pub engine: EngineType,
+    pub compaction_ratio: f32,
+    pub compaction_max_segment: usize,
 }
 
 impl Settings {
@@ -45,6 +47,8 @@ impl Settings {
             max_segment_bytes: 1_048_576 * 50,
             sync_strategy: FSyncStrategy::Always,
             engine: EngineType::KV,
+            compaction_ratio: 0.0,
+            compaction_max_segment: 0,
         };
         while let Some(arg) = args_iter.next() {
             match arg.as_str() {
@@ -76,6 +80,19 @@ impl Settings {
                         settings.engine = Settings::parse_engine(value).unwrap();
                     }
                 }
+                "-cr" | "--compaction-ratio" => {
+                    if let Some(value) = args_iter.next() {
+                        settings.compaction_ratio =
+                            value.parse().expect("Invalid compaction ratio provided");
+                    }
+                }
+                "-cms" | "--compaction-max-segments" => {
+                    if let Some(value) = args_iter.next() {
+                        settings.compaction_max_segment = value
+                            .parse()
+                            .expect("Invalid compaction max segments provided");
+                    }
+                }
                 _ => println!("Unknown argument: {}", arg),
             }
         }
@@ -100,6 +117,10 @@ impl Settings {
         );
         println!("                         (default: always)");
         println!("  -e, --engine <ENGINE>  Storage engine: 'kv' or 'lsm' (default: kv)");
+        println!("  -cr, --compaction-ratio <RATIO>");
+        println!(
+            "                         Auto-compact when dead/total bytes exceeds ratio (default: 0.0 = disabled)"
+        );
         println!("  -h, --help             Print this help message");
     }
     fn parse_fsync(s: &str) -> Result<FSyncStrategy, String> {

@@ -42,10 +42,6 @@ Add a `--role leader|follower` flag. The leader streams its write-ahead log to f
 
 Shard the keyspace across multiple kv-store instances using consistent hashing or range-based partitioning. A coordinator node routes requests to the correct shard. Teaches DDIA Ch. 6 partitioning concepts: rebalancing, hot spots, and partition-aware routing.
 
-## #35 — Automatic compaction trigger
-
-Instead of manual `COMPACT` commands, trigger compaction automatically when dead-bytes / total-bytes exceeds a configurable threshold or when segment count exceeds a limit. Uses the existing `BackgroundWorker` infrastructure. Small but impactful operational improvement.
-
 ## #36 — Per-operation latency histograms
 
 Extend `Stats` to track per-operation latency distributions (p50/p95/p99). Implement a streaming quantile estimator (e.g., DDSketch or simple histogram buckets). Surface the results via the `STATS` command. Good exercise in streaming algorithms.
@@ -75,6 +71,12 @@ Add a `cargo run --bin kvbench` binary that writes N random keys, reads them bac
 Add a TCP command that dumps internal storage state: segment file listing, index size, bloom filter stats (estimated false positive rate), hint file presence, sparse index entry count. Lets you observe compaction shrinking segments and see the sparse index in action.
 
 # Closed Tasks
+
+## #35 — Automatic compaction trigger
+
+Instead of manual `COMPACT` commands, trigger compaction automatically when dead-bytes / total-bytes exceeds a configurable threshold or when segment count exceeds a limit. The trigger runs in a background thread (matching the manual `COMPACT` pattern) so writes are never blocked. `segment_count()` added to the `StorageEngine` trait and implemented for both engines — KV tracks it via a field incremented on segment roll and reset on compaction; LSM returns `self.segments.len()`. Both conditions (ratio and segment count) are evaluated for every engine; natural zero-values disable the irrelevant condition per engine.
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/23
 
 ## #14 — Hardcoded port in integration tests
 
