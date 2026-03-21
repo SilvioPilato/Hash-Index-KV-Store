@@ -76,7 +76,7 @@ Add a TCP command that dumps internal storage state: segment file listing, index
 
 Instead of manual `COMPACT` commands, trigger compaction automatically when dead-bytes / total-bytes exceeds a configurable threshold or when segment count exceeds a limit. The trigger runs in a background thread (matching the manual `COMPACT` pattern) so writes are never blocked. `segment_count()` added to the `StorageEngine` trait and implemented for both engines — KV tracks it via a field incremented on segment roll and reset on compaction; LSM returns `self.segments.len()`. Both conditions (ratio and segment count) are evaluated for every engine; natural zero-values disable the irrelevant condition per engine.
 
-PR: <!-- to be added -->
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/23
 
 ## #14 — Hardcoded port in integration tests
 
