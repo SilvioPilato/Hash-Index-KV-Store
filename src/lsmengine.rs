@@ -122,4 +122,16 @@ impl StorageEngine for LsmEngine {
         self.memtable.clear();
         Ok(())
     }
+
+    fn dead_bytes(&self) -> u64 {
+        0
+    }
+
+    fn total_bytes(&self) -> u64 {
+        0
+    }
+
+    fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
 }

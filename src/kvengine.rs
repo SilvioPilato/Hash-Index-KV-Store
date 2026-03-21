@@ -20,6 +20,9 @@ pub struct KVEngine {
     writes_since_fsync: u64,
     fsync_strategy: FSyncStrategy,
     fsync_handle: Option<BackgroundWorker>,
+    dead_bytes: u64,
+    total_bytes: u64,
+    segment_count: usize,
 }
 
 impl KVEngine {
@@ -52,6 +55,9 @@ impl KVEngine {
             writes_since_fsync: 0,
             fsync_strategy,
             fsync_handle,
+            dead_bytes: 0,
+            total_bytes: 0,
+            segment_count: 1,
         })
     }
 
@@ -82,18 +88,17 @@ impl KVEngine {
         let mut hash_index = HashIndex::new();
         let mut current_file = None;
         let mut active_segment = None;
-
+        let mut size = 0;
         for segment in segments.iter() {
             let mut file = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .open(segment.path(db_dir))?;
-
             match Hint::read_file(segment.hint_path(db_dir)) {
                 Ok(hints) => {
                     hints.iter().for_each(|entry| {
                         if !entry.tombstone {
-                            hash_index.set(entry.key.clone(), entry.offset, segment.timestamp);
+                            hash_index.set(entry.key.clone(), entry.offset, segment.timestamp, 0);
                         }
                     });
                 }
@@ -103,6 +108,7 @@ impl KVEngine {
             }
             current_file = Some(file);
             active_segment = Some(segment);
+            size += std::fs::metadata(segment.path(db_dir))?.len();
         }
         let segment = active_segment.unwrap().to_owned();
         let fsync_handle = Self::spawn_fsync_worker(fsync_strategy, segment.path(db_dir));
@@ -119,6 +125,9 @@ impl KVEngine {
             writes_since_fsync: 0,
             fsync_strategy,
             fsync_handle,
+            dead_bytes: 0,
+            total_bytes: size,
+            segment_count: segments.len(),
         }))
     }
 
@@ -191,6 +200,7 @@ impl KVEngine {
         self.active_segment = segment;
         self.fsync_handle =
             Self::spawn_fsync_worker(self.fsync_strategy, self.active_segment.path(&self.db_path));
+        self.segment_count += 1;
         Ok(())
     }
 
@@ -248,6 +258,7 @@ impl StorageEngine for KVEngine {
         self.active_segment = new_db.active_segment;
         self.writes_since_fsync = new_db.writes_since_fsync;
         self.fsync_handle = new_db.fsync_handle;
+        self.segment_count = 1;
         Ok(())
     }
 
@@ -314,8 +325,15 @@ impl StorageEngine for KVEngine {
         }
         let mut file = self.active_file.try_clone()?;
         let offset = record.append(&mut file)?;
-        self.index
-            .set(key.to_string(), offset, self.active_segment.timestamp);
+        if let Some(old) = self.index.set(
+            key.to_string(),
+            offset,
+            self.active_segment.timestamp,
+            record.size_on_disk(),
+        ) {
+            self.dead_bytes += old.record_size;
+        }
+        self.total_bytes += record.size_on_disk();
         self.fsync()?;
 
         Ok(())
@@ -335,7 +353,7 @@ impl StorageEngine for KVEngine {
         }
         let mut file = self.active_file.try_clone()?;
         match self.index.delete(key) {
-            Some(_) => {
+            Some(old) => {
                 let record = Record {
                     header: RecordHeader {
                         crc32: 0u32,
@@ -348,9 +366,24 @@ impl StorageEngine for KVEngine {
                 };
                 record.append(&mut file)?;
                 self.fsync()?;
+                self.dead_bytes += old.record_size + record.size_on_disk();
+                self.total_bytes += record.size_on_disk();
+
                 Ok(Some(()))
             }
             None => Ok(None),
         }
+    }
+
+    fn dead_bytes(&self) -> u64 {
+        self.dead_bytes
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+
+    fn segment_count(&self) -> usize {
+        self.segment_count
     }
 }
