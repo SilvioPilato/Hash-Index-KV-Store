@@ -14,6 +14,7 @@ pub struct HashIndex {
 pub struct IndexEntry {
     pub segment_timestamp: u64,
     pub offset: u64,
+    pub record_size: u64,
 }
 
 impl HashIndex {
@@ -30,12 +31,19 @@ impl HashIndex {
     }
 
     /// Inserts or updates the byte offset for the given key.
-    pub fn set(&mut self, key: String, file_location: u64, segment_timestamp: u64) {
+    pub fn set(
+        &mut self,
+        key: String,
+        file_location: u64,
+        segment_timestamp: u64,
+        record_size: u64,
+    ) -> Option<IndexEntry> {
         let entry = IndexEntry {
             segment_timestamp,
             offset: file_location,
+            record_size,
         };
-        self.hashmap.insert(key, entry);
+        self.hashmap.insert(key, entry)
     }
 
     /// Returns an iterator over all keys in the index.
@@ -69,6 +77,7 @@ impl HashIndex {
             let entry = IndexEntry {
                 segment_timestamp,
                 offset,
+                record_size: 0,
             };
             hashmap.insert(key, entry);
         }
@@ -97,6 +106,7 @@ impl HashIndex {
             let entry = IndexEntry {
                 segment_timestamp,
                 offset,
+                record_size: 0,
             };
             self.hashmap.insert(key, entry);
         }
