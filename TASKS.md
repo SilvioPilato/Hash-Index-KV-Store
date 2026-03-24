@@ -1,8 +1,6 @@
 # In Progress
 
-## #25 — WAL (Write-Ahead Log) for the LSM memtable (DDIA Ch. 3)
-
-The LSM engine's memtable is currently volatile — a crash before flush loses all in-flight writes. Add a write-ahead log that persists every write before applying it to the memtable, and replays uncommitted entries on startup. This is a core LSM-tree concept directly from DDIA's discussion of log-structured storage.
+# Open Tasks
 
 ## #26 — Persist Bloom filters and sparse index to disk (DDIA Ch. 3)
 
@@ -69,6 +67,12 @@ Add a `cargo run --bin kvbench` binary that writes N random keys, reads them bac
 Add a TCP command that dumps internal storage state: segment file listing, index size, bloom filter stats (estimated false positive rate), hint file presence, sparse index entry count. Lets you observe compaction shrinking segments and see the sparse index in action.
 
 # Closed Tasks
+
+## #25 — WAL (Write-Ahead Log) for the LSM memtable (DDIA Ch. 3)
+
+The LSM engine's memtable is currently volatile — a crash before flush loses all in-flight writes. Add a write-ahead log that persists every write before applying it to the memtable, and replays uncommitted entries on startup. This is a core LSM-tree concept directly from DDIA's discussion of log-structured storage.
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/24
 
 ## #35 — Automatic compaction trigger
 
