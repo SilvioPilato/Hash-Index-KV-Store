@@ -1,7 +1,5 @@
 # In Progress
 
-# Open Tasks
-
 ## #25 — WAL (Write-Ahead Log) for the LSM memtable (DDIA Ch. 3)
 
 The LSM engine's memtable is currently volatile — a crash before flush loses all in-flight writes. Add a write-ahead log that persists every write before applying it to the memtable, and replays uncommitted entries on startup. This is a core LSM-tree concept directly from DDIA's discussion of log-structured storage.

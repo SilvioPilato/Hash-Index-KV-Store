@@ -11,4 +11,5 @@ pub mod segment;
 pub mod settings;
 pub mod sstable;
 pub mod stats;
+pub mod wal;
 pub mod worker;

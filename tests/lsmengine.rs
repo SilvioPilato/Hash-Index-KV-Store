@@ -18,7 +18,7 @@ const BIG_MEMTABLE: usize = 1_048_576; // 1 MB — won't auto-flush
 #[test]
 fn set_and_get() {
     let dir = temp_dir("set_get");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE);
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("hello", "world").unwrap();
     let result = engine.get("hello").unwrap();
     assert_eq!(result, Some(("hello".to_string(), "world".to_string())));
@@ -27,14 +27,14 @@ fn set_and_get() {
 #[test]
 fn get_missing_key() {
     let dir = temp_dir("missing");
-    let engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE);
+    let engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
     assert_eq!(engine.get("nope").unwrap(), None);
 }
 
 #[test]
 fn set_overwrite() {
     let dir = temp_dir("overwrite");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE);
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "old").unwrap();
     engine.set("k", "new").unwrap();
     let (_, v) = engine.get("k").unwrap().unwrap();
@@ -44,7 +44,7 @@ fn set_overwrite() {
 #[test]
 fn delete_removes_key() {
     let dir = temp_dir("delete");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE);
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "v").unwrap();
     engine.delete("k").unwrap();
     assert_eq!(engine.get("k").unwrap(), None);
@@ -53,7 +53,7 @@ fn delete_removes_key() {
 #[test]
 fn delete_nonexistent_key() {
     let dir = temp_dir("delete_missing");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE);
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
     let result = engine.delete("nope").unwrap();
     assert_eq!(result, None);
 }
@@ -62,7 +62,7 @@ fn delete_nonexistent_key() {
 fn memtable_flushes_to_sstable() {
     let dir = temp_dir("flush");
     // Tiny threshold so a single write triggers a flush
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
 
     // After flush, memtable is cleared but data is readable from SSTable
@@ -87,7 +87,7 @@ fn memtable_flushes_to_sstable() {
 #[test]
 fn reads_span_memtable_and_segments() {
     let dir = temp_dir("span");
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     // This will flush to segment
     engine.set("k1", "v1").unwrap();
 
@@ -106,7 +106,7 @@ fn reads_span_memtable_and_segments() {
 #[test]
 fn delete_shadows_flushed_value() {
     let dir = temp_dir("shadow");
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     // Flush k1 to a segment
     engine.set("k1", "v1").unwrap();
     // Delete in memtable should shadow the segment value
@@ -117,7 +117,7 @@ fn delete_shadows_flushed_value() {
 #[test]
 fn compact_preserves_values() {
     let dir = temp_dir("compact_preserve");
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
 
@@ -132,7 +132,7 @@ fn compact_preserves_values() {
 #[test]
 fn compact_keeps_latest_value() {
     let dir = temp_dir("compact_latest");
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     engine.set("k", "old").unwrap();
     engine.set("k", "new").unwrap();
 
@@ -145,7 +145,7 @@ fn compact_keeps_latest_value() {
 #[test]
 fn compact_drops_deleted_keys() {
     let dir = temp_dir("compact_delete");
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.delete("k1").unwrap();
 
@@ -157,7 +157,7 @@ fn compact_drops_deleted_keys() {
 #[test]
 fn compact_is_idempotent() {
     let dir = temp_dir("compact_idempotent");
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
 
@@ -174,7 +174,7 @@ fn compact_is_idempotent() {
 fn from_dir_reloads_segments() {
     let dir = temp_dir("from_dir");
     {
-        let mut engine = LsmEngine::new(&dir, "test", 1);
+        let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
         engine.set("k1", "v1").unwrap();
         engine.set("k2", "v2").unwrap();
     }
@@ -189,7 +189,7 @@ fn from_dir_reloads_segments() {
 #[test]
 fn compact_reduces_segment_count() {
     let dir = temp_dir("compact_reduce");
-    let mut engine = LsmEngine::new(&dir, "test", 1);
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
     engine.set("k3", "v3").unwrap();
@@ -223,4 +223,97 @@ fn compact_reduces_segment_count() {
         })
         .collect();
     assert_eq!(sst_after.len(), 1);
+}
+
+// --- WAL recovery tests ---
+
+#[test]
+fn wal_recovers_unflushed_writes() {
+    // Writes that never trigger a flush live only in the WAL.
+    // Dropping the engine simulates a crash; from_dir must replay the WAL.
+    let dir = temp_dir("wal_recover");
+    {
+        let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+        engine.set("k1", "v1").unwrap();
+        engine.set("k2", "v2").unwrap();
+        engine.set("k3", "v3").unwrap();
+        // drop without flush
+    }
+
+    let engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    assert_eq!(
+        engine.get("k1").unwrap(),
+        Some(("k1".to_string(), "v1".to_string()))
+    );
+    assert_eq!(
+        engine.get("k2").unwrap(),
+        Some(("k2".to_string(), "v2".to_string()))
+    );
+    assert_eq!(
+        engine.get("k3").unwrap(),
+        Some(("k3".to_string(), "v3".to_string()))
+    );
+}
+
+#[test]
+fn wal_recovers_unflushed_delete() {
+    // A delete that has not been flushed must be replayed as a tombstone,
+    // shadowing the earlier value that was already flushed to an SSTable.
+    let dir = temp_dir("wal_delete");
+    {
+        let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1 flushes immediately
+        engine.set("k1", "v1").unwrap(); // flushed to SSTable
+    }
+    {
+        let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+        engine.delete("k1").unwrap(); // tombstone in WAL only, not flushed
+        // drop without flush
+    }
+
+    let engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    assert_eq!(engine.get("k1").unwrap(), None);
+}
+
+#[test]
+fn wal_corrupt_tail_does_not_panic() {
+    // A crash mid-write leaves a torn record at the tail of the WAL.
+    // from_dir must stop replay at the corrupt record and recover earlier entries.
+    let dir = temp_dir("wal_corrupt");
+    {
+        let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+        engine.set("k1", "v1").unwrap();
+        engine.set("k2", "v2").unwrap();
+    }
+
+    // Truncate the last 5 bytes of the WAL to simulate a torn write
+    let wal_path = std::path::Path::new(&dir).join("test.wal");
+    let metadata = fs::metadata(&wal_path).unwrap();
+    let truncated_len = metadata.len().saturating_sub(5);
+    let file = fs::OpenOptions::new().write(true).open(&wal_path).unwrap();
+    file.set_len(truncated_len).unwrap();
+
+    // Must not panic; k1 may or may not be recovered depending on where truncation fell,
+    // but from_dir must succeed
+    let engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    // k1 was written first — its record is intact and must be readable
+    assert_eq!(
+        engine.get("k1").unwrap(),
+        Some(("k1".to_string(), "v1".to_string()))
+    );
+}
+
+#[test]
+fn wal_is_absent_after_flush() {
+    // Once the memtable is flushed to an SSTable, the WAL is no longer needed.
+    // It must be deleted so that the next startup doesn't replay stale entries.
+    let dir = temp_dir("wal_absent");
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1, every write flushes
+    engine.set("k1", "v1").unwrap();
+
+    let wal_path = std::path::Path::new(&dir).join("test.wal");
+    assert_eq!(
+        fs::metadata(&wal_path).unwrap().len(),
+        0,
+        "WAL should be empty after flush"
+    );
 }

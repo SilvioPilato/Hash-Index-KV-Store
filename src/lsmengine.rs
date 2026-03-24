@@ -1,9 +1,10 @@
-use std::{fs, io};
+use std::{fs, io, path::PathBuf};
 
 use crate::{
     engine::StorageEngine,
     memtable::Memtable,
     sstable::{SSTable, get_sstables},
+    wal::Wal,
 };
 
 pub struct LsmEngine {
@@ -12,26 +13,32 @@ pub struct LsmEngine {
     db_path: String,
     db_name: String,
     max_memtable_bytes: usize, // flush threshold
+    wal: Wal,
 }
 
 impl LsmEngine {
-    pub fn new(db_path: &str, db_name: &str, max_memtable_bytes: usize) -> Self {
-        LsmEngine {
+    pub fn new(db_path: &str, db_name: &str, max_memtable_bytes: usize) -> io::Result<LsmEngine> {
+        let wal = Wal::open(&PathBuf::from(db_path), db_name.to_string())?;
+        Ok(LsmEngine {
             memtable: Memtable::new(),
             segments: Vec::new(),
             db_path: db_path.to_string(),
             db_name: db_name.to_string(),
             max_memtable_bytes,
-        }
+            wal,
+        })
     }
 
     pub fn from_dir(dir: &str, db_name: &str, max_memtable_bytes: usize) -> io::Result<Self> {
+        let wal = Wal::open(&PathBuf::from(dir), db_name.to_string())?;
+        let memtable = wal.replay()?;
         Ok(LsmEngine {
-            memtable: Memtable::new(),
+            memtable,
             segments: get_sstables(dir, db_name)?,
             db_path: dir.to_string(),
             db_name: db_name.to_string(),
             max_memtable_bytes,
+            wal,
         })
     }
 }
@@ -58,12 +65,14 @@ impl StorageEngine for LsmEngine {
     }
 
     fn set(&mut self, key: &str, value: &str) -> Result<(), std::io::Error> {
+        self.wal.append(key.to_string(), value.to_string(), false)?;
         self.memtable.insert(key.to_string(), value.to_string());
 
         if self.memtable.size_bytes() >= self.max_memtable_bytes {
             let sstable = SSTable::from_memtable(&self.db_path, &self.db_name, &self.memtable)?;
             self.segments.push(sstable);
             self.memtable.clear();
+            self.wal.reset()?;
         }
 
         Ok(())
@@ -72,6 +81,7 @@ impl StorageEngine for LsmEngine {
     fn delete(&mut self, key: &str) -> Result<Option<()>, std::io::Error> {
         // Check if key exists
         let exists = self.get(key)?.is_some();
+        self.wal.append(key.to_string(), String::new(), true)?;
 
         self.memtable.remove(key.to_string());
 
@@ -79,6 +89,7 @@ impl StorageEngine for LsmEngine {
             let sstable = SSTable::from_memtable(&self.db_path, &self.db_name, &self.memtable)?;
             self.segments.push(sstable);
             self.memtable.clear();
+            self.wal.reset()?;
         }
 
         if exists { Ok(Some(())) } else { Ok(None) }
