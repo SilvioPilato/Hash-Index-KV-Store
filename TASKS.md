@@ -116,7 +116,7 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Replace the text-based "line + blank line" TCP protocol with length-prefixed binary frames. Eliminates ambiguity around spaces in values, enables request pipelining, and is a good introduction to encoding formats and schema evolution (DDIA Ch. 4).
 
-PR: _pending_
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/25
 
 ## #25 — WAL (Write-Ahead Log) for the LSM memtable (DDIA Ch. 3)
 
