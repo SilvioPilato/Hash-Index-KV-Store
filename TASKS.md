@@ -1,9 +1,5 @@
 # In Progress
 
-## #39 — `LIST` command
-
-There is currently no way to see what keys exist. Wire a `LIST` TCP command through the `StorageEngine` trait. `KVEngine` already has `ls_keys()` via `HashIndex`; `Memtable` has `entries()` for the LSM side. Return all keys to the client.
-
 # Open Tasks
 
 ## #26 — Persist Bloom filters and sparse index to disk (DDIA Ch. 3)
@@ -111,6 +107,12 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
 # Closed Tasks
+
+## #39 — `LIST` command
+
+There is currently no way to see what keys exist. Wire a `LIST` TCP command through the `StorageEngine` trait. `KVEngine` already has `ls_keys()` via `HashIndex`; `Memtable` has `entries()` for the LSM side. Return all keys to the client.
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/26
 
 ## #30 — Binary protocol with length-prefixed framing (DDIA Ch. 4)
 
