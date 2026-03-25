@@ -1,3 +1,4 @@
+use hash_index::bffp::{Command, ResponseStatus, decode_input_frame, encode_frame};
 use hash_index::engine::StorageEngine;
 use hash_index::kvengine::KVEngine;
 use hash_index::lsmengine::LsmEngine;
@@ -7,21 +8,12 @@ use hash_index::stats::Stats;
 use std::env;
 use std::io::{self};
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, RwLock, atomic::Ordering},
     thread,
     time::Instant,
 };
-
-enum Command {
-    Write(String, String),
-    Read(String),
-    Delete(String),
-    Invalid(String),
-    Compact,
-    Stats,
-}
 
 fn verbose_logging_enabled() -> bool {
     matches!(env::var("KV_STORE_VERBOSE"), Ok(value) if value == "1")
@@ -98,7 +90,7 @@ fn main() -> io::Result<()> {
                         .active_connections
                         .fetch_sub(1, Ordering::Relaxed);
                     stream
-                        .write_all(response.as_bytes())
+                        .write_all(&response)
                         .expect("Could not write response to stream");
                 });
             }
@@ -116,20 +108,49 @@ fn handle_stream(
     stats: &Arc<Stats>,
     compaction_ratio: f32,
     compaction_max_segment: usize,
-) -> String {
-    const MAX_REQUEST_BYTES: u64 = (MAX_KEY_SIZE + MAX_VALUE_SIZE + 1024) as u64;
-    let reader = BufReader::new(stream.take(MAX_REQUEST_BYTES));
-    let request: Vec<_> = reader
-        .lines()
-        .map(|result| result.unwrap_or_else(|_| String::new()))
-        .take_while(|line| !line.is_empty())
-        .collect();
+) -> Vec<u8> {
+    handle_stream_inner(
+        stream,
+        database,
+        stats,
+        compaction_ratio,
+        compaction_max_segment,
+    )
+    .unwrap_or_else(|e| encode_frame(ResponseStatus::Error, &[e.to_string()]))
+}
 
-    if request.is_empty() {
-        return "Received empty request.".to_string();
+fn handle_stream_inner(
+    stream: &TcpStream,
+    database: Arc<RwLock<Box<dyn StorageEngine>>>,
+    stats: &Arc<Stats>,
+    compaction_ratio: f32,
+    compaction_max_segment: usize,
+) -> io::Result<Vec<u8>> {
+    const MAX_REQUEST_BYTES: usize = MAX_KEY_SIZE + MAX_VALUE_SIZE + 1024;
+    let mut reader = BufReader::new(stream);
+    let mut len_buf = [0u8; 4];
+    if reader.read_exact(&mut len_buf).is_err() {
+        return Ok(encode_frame(
+            ResponseStatus::Error,
+            &["Received empty request.".to_string()],
+        ));
     }
+    let frame_len = u32::from_be_bytes(len_buf) as usize;
+    if frame_len > MAX_REQUEST_BYTES {
+        return Ok(encode_frame(
+            ResponseStatus::Error,
+            &[format!("Frame too large: {} bytes", frame_len)],
+        ));
+    }
+    let mut payload = vec![0u8; frame_len];
+    reader.read_exact(&mut payload)?;
+    let mut buf = Vec::with_capacity(4 + frame_len);
+    buf.extend_from_slice(&len_buf);
+    buf.extend_from_slice(&payload);
 
-    match parse_message(&request.concat()) {
+    let cmd = decode_input_frame(&buf)?;
+
+    Ok(match cmd {
         Command::Write(key, value) => {
             log_verbose(format!(
                 "Parsed WRITE command: key='{}', value='{}'",
@@ -156,9 +177,9 @@ fn handle_stream(
                         compaction_ratio,
                         compaction_max_segment,
                     );
-                    "OK".to_string()
+                    encode_frame(ResponseStatus::Ok, &[])
                 }
-                Err(err) => err.to_string(),
+                Err(err) => encode_frame(ResponseStatus::Error, &[err.to_string()]),
             }
         }
         Command::Read(key) => {
@@ -166,11 +187,9 @@ fn handle_stream(
             let db = database.read().unwrap();
             stats.reads.fetch_add(1, Ordering::Relaxed);
             match db.get(&key) {
-                Ok(result) => match result {
-                    Some((_, v)) => v,
-                    None => "Not found".to_string(),
-                },
-                Err(error) => error.to_string(),
+                Ok(Some((_, v))) => encode_frame(ResponseStatus::Ok, &[v]),
+                Ok(None) => encode_frame(ResponseStatus::NotFound, &[]),
+                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
             }
         }
         Command::Delete(key) => {
@@ -188,10 +207,10 @@ fn handle_stream(
                         compaction_ratio,
                         compaction_max_segment,
                     );
-                    "OK".to_string()
+                    encode_frame(ResponseStatus::Ok, &[])
                 }
-                Ok(None) => "Not found".to_string(),
-                Err(error) => error.to_string(),
+                Ok(None) => encode_frame(ResponseStatus::NotFound, &[]),
+                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
             }
         }
         Command::Compact => {
@@ -201,7 +220,7 @@ fn handle_stream(
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_err()
             {
-                return "NOOP".to_string();
+                return Ok(encode_frame(ResponseStatus::Noop, &[]));
             }
             stats
                 .last_compact_start_ms
@@ -218,52 +237,17 @@ fn handle_stream(
                 stats_clone.compacting.store(false, Ordering::Release);
                 stats_clone.compaction_count.fetch_add(1, Ordering::Relaxed);
             });
-            "OK".to_string()
+            encode_frame(ResponseStatus::Ok, &[])
         }
-        Command::Stats => stats.snapshot(),
-        Command::Invalid(original_command) => {
-            log_verbose(format!("Invalid command: {}", original_command));
-            format!("Invalid command: {}", original_command)
+        Command::Stats => encode_frame(ResponseStatus::Ok, &[stats.snapshot()]),
+        Command::Invalid(op_code) => {
+            log_verbose(format!("Invalid op code: {}", op_code));
+            encode_frame(
+                ResponseStatus::Error,
+                &[format!("Invalid op code: {}", op_code)],
+            )
         }
-    }
-}
-
-fn parse_message(message: &str) -> Command {
-    let words: Vec<&str> = message.split_whitespace().collect();
-
-    if words.is_empty() {
-        return Command::Invalid(message.to_string());
-    }
-
-    match words[0].to_uppercase().as_str() {
-        "WRITE" => {
-            let rest = message["WRITE".len()..].trim_start();
-            if let Some(i) = rest.find(char::is_whitespace) {
-                let key = &rest[..i];
-                let value_start = i + rest[i..].char_indices().nth(1).map_or(0, |(j, _)| j);
-                Command::Write(key.to_string(), rest[value_start..].to_string())
-            } else {
-                Command::Invalid(message.to_string())
-            }
-        }
-        "READ" => {
-            if words.len() == 2 {
-                Command::Read(words[1].to_string())
-            } else {
-                Command::Invalid(message.to_string())
-            }
-        }
-        "DELETE" => {
-            if words.len() == 2 {
-                Command::Delete(words[1].to_string())
-            } else {
-                Command::Invalid(message.to_string())
-            }
-        }
-        "COMPACT" => Command::Compact,
-        "STATS" => Command::Stats,
-        _ => Command::Invalid(message.to_string()),
-    }
+    })
 }
 
 fn maybe_trigger_compaction(

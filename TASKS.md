@@ -18,10 +18,6 @@ Memory-map SSTable files so lookups become pointer arithmetic instead of `read()
 
 Partition SSTables into fixed-size blocks (e.g., 4 KB) with per-block compression (e.g., hand-rolled LZ77 or simple run-length encoding). Index points to block offsets instead of individual records. Teaches data layout optimization and compression fundamentals.
 
-## #30 — Binary protocol with length-prefixed framing (DDIA Ch. 4)
-
-Replace the text-based "line + blank line" TCP protocol with length-prefixed binary frames. Eliminates ambiguity around spaces in values, enables request pipelining, and is a good introduction to encoding formats and schema evolution (DDIA Ch. 4).
-
 ## #31 — Connection timeouts and limits
 
 Currently there is no read timeout and unbounded thread spawning per TCP connection. Add `SO_TIMEOUT` on sockets, a maximum connection limit, and graceful backpressure when the limit is reached. Addresses real operational concerns without changing the threading model.
@@ -66,7 +62,61 @@ Add a `cargo run --bin kvbench` binary that writes N random keys, reads them bac
 
 Add a TCP command that dumps internal storage state: segment file listing, index size, bloom filter stats (estimated false positive rate), hint file presence, sparse index entry count. Lets you observe compaction shrinking segments and see the sparse index in action.
 
+## #48 — `RANGE` command (LSM only)
+
+Add a `RANGE <start> <end>` TCP command that returns all key-value pairs whose keys fall in the inclusive range `[start, end]`. Implement it only on the LSM engine — the KV (Bitcask) engine returns an error, making the hash-index limitation tangible. The LSM implementation merges results from the memtable (`BTreeMap::range`) and all SSTable iterators, applying tombstone suppression and returning the newest value per key in sorted order. Add `fn range(&self, start: &str, end: &str) -> Result<Vec<(String, String)>, io::Error>` to the `StorageEngine` trait. Depends on #30 (binary protocol) for clean multi-value response framing.
+
+## #49 — `EXISTS` command
+
+Add an `EXISTS <key>` TCP command that returns `1` if the key exists, `0` if not — without fetching the value. Both engines support it. On LSM, the bloom filter makes this especially efficient (fast negative lookups). Useful as a standalone command and as a building block for conditional operations.
+
+## #50 — `PREFIX` command (LSM only)
+
+Add a `PREFIX <prefix>` TCP command that returns all key-value pairs whose keys start with the given string. LSM-only — implemented as a range scan `[prefix, prefix\xff]` on the sorted memtable and SSTables. The KV engine returns an error. Depends on #48 (`RANGE`) since it's a specialisation of range scan. Depends on #30 (binary protocol).
+
+## #51 — `COUNT` command (LSM only)
+
+Add a `COUNT <start> <end>` TCP command that returns the number of live keys in the inclusive range `[start, end]` without returning the values themselves. LSM-only. Shares the same merge-scan logic as `RANGE` but only emits a count. Depends on #48.
+
+## #52 — `FIRST` and `LAST` commands (LSM only)
+
+Add `FIRST` and `LAST` TCP commands that return the lexicographically smallest and largest live keys (with their values). LSM-only — trivially answered from the `BTreeMap` memtable and the first/last entries of the oldest/newest SSTables. The KV engine returns an error.
+
+## #53 — `MGET` command
+
+Add a `MGET <key1> <key2> ...` TCP command that fetches multiple keys in a single round trip and returns their values (or null/missing markers for absent keys). Supported by both engines. Depends on #30 (binary protocol) for multi-value response framing.
+
+## #54 — `MSET` command
+
+Add a `MSET <k1> <v1> <k2> <v2> ...` TCP command that writes multiple key-value pairs atomically in a single round trip. Supported by both engines. Reduces client-server overhead for bulk writes.
+
+## #55 — `INCR` command
+
+Add an `INCR <key>` TCP command that atomically increments an integer value stored at a key (creating it at 1 if absent). Returns the new value. Teaches read-modify-write atomicity — must be handled under the engine's write lock to avoid races. Supported by both engines.
+
+## #56 — `TTL` command
+
+Add a `TTL <key> <seconds>` TCP command that associates an expiry timestamp with a key. Expired keys are invisible to reads and cleaned up during compaction. Requires storing the expiry alongside the value in the record format (or as a separate metadata field). Good exercise in extending the on-disk format and compaction logic.
+
+## #57 — `PING` command
+
+Add a `PING` TCP command that returns `PONG`. Trivial to implement — useful as a health check and connection keep-alive. Standard across Redis, Memcached, and most TCP servers.
+
+## #58 — `FLUSH` command (LSM only)
+
+Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTable, regardless of whether the flush threshold has been reached. LSM-only. Useful for testing, observability, and ensuring durability on demand. The KV engine returns an error (it has no memtable to flush).
+
+## #59 — `SCAN` command
+
+Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
+
 # Closed Tasks
+
+## #30 — Binary protocol with length-prefixed framing (DDIA Ch. 4)
+
+Replace the text-based "line + blank line" TCP protocol with length-prefixed binary frames. Eliminates ambiguity around spaces in values, enables request pipelining, and is a good introduction to encoding formats and schema evolution (DDIA Ch. 4).
+
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/25
 
 ## #25 — WAL (Write-Ahead Log) for the LSM memtable (DDIA Ch. 3)
 
