@@ -1,7 +1,8 @@
+use hash_index::bffp::{ResponseStatus, decode_response_frame};
 use std::{
     env, fs,
-    io::{Read, Write},
-    net::TcpStream,
+    io::{Cursor, Read, Write},
+    net::{Shutdown, TcpStream},
     path::Path,
     process::Command,
     sync::{Mutex, OnceLock},
@@ -113,15 +114,68 @@ fn wait_for_server() {
     }
 }
 
+fn build_input_frame(op: u8, key: Option<&str>, value: Option<&str>) -> Vec<u8> {
+    let mut payload = Cursor::new(Vec::new());
+    payload.write_all(&[op]).unwrap();
+    if let Some(k) = key {
+        let kb = k.as_bytes();
+        payload.write_all(&(kb.len() as u16).to_be_bytes()).unwrap();
+        payload.write_all(kb).unwrap();
+    }
+    if let Some(v) = value {
+        let vb = v.as_bytes();
+        payload.write_all(&(vb.len() as u32).to_be_bytes()).unwrap();
+        payload.write_all(vb).unwrap();
+    }
+    let payload = payload.into_inner();
+    let mut frame = Cursor::new(Vec::new());
+    frame
+        .write_all(&(payload.len() as u32).to_be_bytes())
+        .unwrap();
+    frame.write_all(&payload).unwrap();
+    frame.into_inner()
+}
+
+fn parse_and_build_frame(command: &str) -> Vec<u8> {
+    let mut parts = command.splitn(3, ' ');
+    match parts.next().unwrap() {
+        "READ" => build_input_frame(1, Some(parts.next().unwrap()), None),
+        "WRITE" => {
+            let key = parts.next().unwrap();
+            let value = parts.next().unwrap();
+            build_input_frame(2, Some(key), Some(value))
+        }
+        "DELETE" => build_input_frame(3, Some(parts.next().unwrap()), None),
+        "COMPACT" => build_input_frame(4, None, None),
+        "STATS" => build_input_frame(5, None, None),
+        cmd => panic!("unknown command: {}", cmd),
+    }
+}
+
+fn decode_response_to_string(buf: &[u8]) -> String {
+    let resp = decode_response_frame(buf).expect("decode failed");
+    match resp.status {
+        ResponseStatus::Ok => resp
+            .payload
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "OK".to_string()),
+        ResponseStatus::NotFound => "Not found".to_string(),
+        ResponseStatus::Noop => "NOOP".to_string(),
+        ResponseStatus::Error => resp.payload.into_iter().next().unwrap_or_default(),
+    }
+}
+
 fn send_command(command: &str) -> String {
     let addr = get_server_addr();
     let mut stream = TcpStream::connect(&addr).expect("connect failed");
-    let payload = format!("{}\n\n", command);
-    stream.write_all(payload.as_bytes()).expect("write failed");
-
-    let mut response = String::new();
-    stream.read_to_string(&mut response).expect("read failed");
-    response.trim_end().to_string()
+    stream
+        .write_all(&parse_and_build_frame(command))
+        .expect("write failed");
+    stream.shutdown(Shutdown::Write).expect("shutdown failed");
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).expect("read failed");
+    decode_response_to_string(&buf)
 }
 
 fn wait_for_compaction() {

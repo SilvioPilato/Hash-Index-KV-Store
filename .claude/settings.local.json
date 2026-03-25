@@ -7,7 +7,9 @@
       "Bash(git checkout:*)",
       "Bash(git push:*)",
       "Bash(cargo build:*)",
-      "Bash(exec bash:*)"
+      "Bash(exec bash:*)",
+      "Bash(grep -v \"//\")",
+      "Bash(git commit:*)"
     ]
   }
 }
