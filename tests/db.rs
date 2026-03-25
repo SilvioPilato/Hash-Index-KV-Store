@@ -305,3 +305,68 @@ fn concurrent_reads_return_correct_values() {
         handle.join().unwrap();
     }
 }
+
+#[test]
+fn list_keys_returns_all_live_keys() {
+    let mut db = KVEngine::new(
+        &temp_db_path("list_keys"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+    db.set("a", "1").unwrap();
+    db.set("b", "2").unwrap();
+    db.set("c", "3").unwrap();
+
+    let mut keys = db.list_keys().unwrap();
+    keys.sort();
+    assert_eq!(keys, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn list_keys_excludes_deleted_keys() {
+    let mut db = KVEngine::new(
+        &temp_db_path("list_keys_delete"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+    db.set("a", "1").unwrap();
+    db.set("b", "2").unwrap();
+    db.set("c", "3").unwrap();
+    db.delete("b").unwrap();
+
+    let mut keys = db.list_keys().unwrap();
+    keys.sort();
+    assert_eq!(keys, vec!["a", "c"]);
+}
+
+#[test]
+fn list_keys_deduplicates_overwritten_keys() {
+    let mut db = KVEngine::new(
+        &temp_db_path("list_keys_overwrite"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+    db.set("k", "old").unwrap();
+    db.set("k", "new").unwrap();
+
+    let keys = db.list_keys().unwrap();
+    assert_eq!(keys, vec!["k"]);
+}
+
+#[test]
+fn list_keys_empty_db() {
+    let db = KVEngine::new(
+        &temp_db_path("list_keys_empty"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+    assert_eq!(db.list_keys().unwrap(), Vec::<String>::new());
+}

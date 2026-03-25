@@ -15,6 +15,7 @@ pub enum Command {
     Delete(String),
     Compact,
     Stats,
+    List,
 }
 
 #[repr(u8)]
@@ -67,6 +68,7 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
         3 => Ok(Command::Delete(read_key(&mut cur)?)),
         4 => Ok(Command::Compact),
         5 => Ok(Command::Stats),
+        6 => Ok(Command::List),
         n => Ok(Command::Invalid(n)),
     }
 }
