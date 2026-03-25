@@ -317,3 +317,58 @@ fn wal_is_absent_after_flush() {
         "WAL should be empty after flush"
     );
 }
+
+#[test]
+fn list_keys_returns_all_live_keys() {
+    let dir = temp_dir("list_keys");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+    engine.set("c", "3").unwrap();
+
+    let mut keys = engine.list_keys().unwrap();
+    keys.sort();
+    assert_eq!(keys, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn list_keys_excludes_deleted_keys() {
+    let dir = temp_dir("list_keys_delete");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+    engine.set("c", "3").unwrap();
+    engine.delete("b").unwrap();
+
+    let mut keys = engine.list_keys().unwrap();
+    keys.sort();
+    assert_eq!(keys, vec!["a", "c"]);
+}
+
+#[test]
+fn list_keys_spans_memtable_and_segments() {
+    let dir = temp_dir("list_keys_segments");
+    // Threshold of 1 byte so every write flushes to SSTable
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    engine.set("x", "1").unwrap();
+    engine.set("y", "2").unwrap();
+    // Reload from disk and write one more key — it stays in the memtable
+    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("z", "3").unwrap();
+
+    let mut keys = engine.list_keys().unwrap();
+    keys.sort();
+    assert_eq!(keys, vec!["x", "y", "z"]);
+}
+
+#[test]
+fn list_keys_tombstone_in_memtable_hides_flushed_key() {
+    let dir = temp_dir("list_keys_tombstone");
+    // Flush "a" to SSTable, then delete it via memtable tombstone
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    engine.set("a", "1").unwrap();
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.delete("a").unwrap();
+
+    assert_eq!(engine.list_keys().unwrap(), Vec::<String>::new());
+}

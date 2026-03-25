@@ -1,4 +1,4 @@
-use std::{fs, io, path::PathBuf};
+use std::{collections::HashSet, fs, io, path::PathBuf};
 
 use crate::{
     engine::StorageEngine,
@@ -144,5 +144,30 @@ impl StorageEngine for LsmEngine {
 
     fn segment_count(&self) -> usize {
         self.segments.len()
+    }
+
+    fn list_keys(&self) -> io::Result<Vec<String>> {
+        let mut keys: HashSet<String> = HashSet::new();
+
+        for segment in self.segments.iter() {
+            for result in segment.iter()? {
+                let record = result?;
+                if record.header.tombstone {
+                    keys.remove(&record.key);
+                } else {
+                    keys.insert(record.key);
+                }
+            }
+        }
+
+        for (key, opt) in self.memtable.entries() {
+            if opt.is_some() {
+                keys.insert(key.clone());
+            } else {
+                keys.remove(key);
+            }
+        }
+
+        Ok(keys.into_iter().collect())
     }
 }

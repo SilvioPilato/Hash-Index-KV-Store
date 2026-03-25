@@ -386,4 +386,8 @@ impl StorageEngine for KVEngine {
     fn segment_count(&self) -> usize {
         self.segment_count
     }
+
+    fn list_keys(&self) -> io::Result<Vec<String>> {
+        Ok(self.index.ls_keys().cloned().collect())
+    }
 }

@@ -247,6 +247,13 @@ fn handle_stream_inner(
                 &[format!("Invalid op code: {}", op_code)],
             )
         }
+        Command::List => {
+            let db = database.read().unwrap();
+            match db.list_keys() {
+                Ok(keys) => encode_frame(ResponseStatus::Ok, &keys),
+                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+            }
+        }
     })
 }
 

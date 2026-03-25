@@ -1,5 +1,9 @@
 # In Progress
 
+## #39 — `LIST` command
+
+There is currently no way to see what keys exist. Wire a `LIST` TCP command through the `StorageEngine` trait. `KVEngine` already has `ls_keys()` via `HashIndex`; `Memtable` has `entries()` for the LSM side. Return all keys to the client.
+
 # Open Tasks
 
 ## #26 — Persist Bloom filters and sparse index to disk (DDIA Ch. 3)
@@ -41,10 +45,6 @@ Extend `Stats` to track per-operation latency distributions (p50/p95/p99). Imple
 ## #37 — Crash-recovery and fault-injection tests
 
 Write tests that simulate crashes mid-write and mid-compaction (e.g., truncated files, partial records, missing hint files) and verify the engine recovers correctly. Validates the durability guarantees of both engines and exercises the CRC integrity checks.
-
-## #39 — `LIST` command
-
-There is currently no way to see what keys exist. Wire a `LIST` TCP command through the `StorageEngine` trait. `KVEngine` already has `ls_keys()` via `HashIndex`; `Memtable` has `entries()` for the LSM side. Return all keys to the client.
 
 ## #40 — Engine info in `STATS` output
 
