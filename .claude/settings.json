@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(taskkill //F //IM compact_tcp-bfd0e81625149c81.exe)",
-      "Bash(taskkill //F //IM compact_async-8ca3f096c3696f82.exe)",
-      "Bash(taskkill //F //IM hash-index.exe)"
-    ]
-  }
-}
