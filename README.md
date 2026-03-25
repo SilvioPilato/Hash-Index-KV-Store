@@ -58,42 +58,27 @@ The TCP server keeps its per-request debug logging off by default, so integratio
 
 ## Commands
 
-You can interact with the server using a TCP client (e.g., `netcat` or `telnet`). The following commands are supported:
+The server uses a **binary length-prefixed protocol** (not plain text). Each request is a frame: a 4-byte big-endian payload length, followed by a 1-byte op code, followed by op-specific fields. Responses use the same framing with a 1-byte status byte.
 
-* **WRITE `<key> <value>`**: Stores the given value associated with the key. Values may contain spaces.
-  * Example: `WRITE mykey myvalue`
-* **READ `<key>`**: Retrieves the value associated with the key.
-  * Example: `READ mykey`
-* **DELETE `<key>`**: Deletes the key and its associated value.
-  * Example: `DELETE mykey`
-* **COMPACT**: Triggers background compaction of the database. Compaction rewrites only the latest values into fresh segment file(s), removing deleted keys and old overwrites, then deletes the old segment files. Writes block until compaction finishes. Concurrent compaction requests are rejected (returns `NOOP`).
-  * Example: `COMPACT`
-* **STATS**: Returns runtime counters as `key=value` lines:
-  * `compacting` — whether compaction is currently running
-  * `compaction_count` — number of completed compactions
-  * `last_compact_start_ms` / `last_compact_end_ms` — timestamps of last compaction
-  * `write_blocked_attempts` — writes that arrived during compaction
-  * `write_blocked_total_ms` — total time writes spent waiting for the lock
-  * `reads` / `writes` / `deletes` — operation counters
-  * `active_connections` — current number of connected clients
-  * Example: `STATS`
+The easiest way to interact with the server is to build a client that uses the `bffp` module's `encode_frame`/`decode_response_frame` helpers, or use `netcat`/`telnet` with a tool that can send raw bytes.
 
-Each command should be sent on a new line, followed by an empty line to signify the end of the request.
+### Supported commands
 
-### Example Interaction with `netcat`
+| Command | Op code | Description |
+|---------|---------|-------------|
+| `READ <key>` | 1 | Returns the value for `key`, or NOT_FOUND if absent |
+| `WRITE <key> <value>` | 2 | Stores `value` under `key`. Values may contain spaces |
+| `DELETE <key>` | 3 | Removes `key`. Returns NOT_FOUND if key does not exist |
+| `COMPACT` | 4 | Triggers background compaction. Returns NOOP if already running |
+| `STATS` | 5 | Returns runtime counters as `key=value` pairs |
+| `LIST` | 6 | Returns all live keys as a list of strings |
 
-1. Start the server: `cargo run -- /tmp/mydb`
-2. In another terminal, connect with `netcat`: `nc localhost 6666`
-3. Send commands (each followed by a blank line):
+### STATS fields
 
-```text
-WRITE name Alice
-
-READ name
-
-DELETE name
-
-COMPACT
-
-STATS
-```
+* `compacting` — whether compaction is currently running
+* `compaction_count` — number of completed compactions
+* `last_compact_start_ms` / `last_compact_end_ms` — timestamps of last compaction
+* `write_blocked_attempts` — writes that arrived during compaction
+* `write_blocked_total_ms` — total time writes spent waiting for the lock
+* `reads` / `writes` / `deletes` — operation counters
+* `active_connections` — current number of connected clients

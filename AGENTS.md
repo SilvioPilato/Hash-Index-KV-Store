@@ -52,11 +52,14 @@ Do **not** commit or open a PR until all three pass. If a step fails, fix the is
 | Path | Purpose |
 |------|---------|
 | `src/main.rs` | TCP server, command parsing, request handling |
-| `src/engine.rs` | `StorageEngine` trait (`get`/`set`/`delete`/`compact` + `Send + Sync`) |
+| `src/engine.rs` | `StorageEngine` trait (`get`/`set`/`delete`/`compact`/`list_keys` + `Send + Sync`) |
+| `src/bffp.rs` | Binary frame fixed protocol — length-prefixed framing, encode/decode, op codes |
 | `src/kvengine.rs` | Bitcask-style engine — hash index, append-only segments, hint files |
 | `src/lsmengine.rs` | LSM-tree engine — memtable + sorted SSTable segments |
 | `src/memtable.rs` | In-memory `BTreeMap` write buffer with size tracking and tombstones |
 | `src/sstable.rs` | Sorted string table segment files with sparse index for fast lookups |
+| `src/wal.rs` | Write-ahead log for LSM engine — append, replay on startup, reset after flush |
+| `src/bloom.rs` | Hand-rolled Bloom filter — probabilistic membership test for fast negative lookups |
 | `src/record.rs` | On-disk record format (header + CRC + key + value) |
 | `src/crc.rs` | Hand-rolled CRC32 (IEEE polynomial, compile-time table) |
 | `src/hash_index.rs` | In-memory hash map index (key → IndexEntry: segment + offset) |
