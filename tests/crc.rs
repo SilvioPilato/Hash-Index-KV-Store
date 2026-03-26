@@ -1,5 +1,5 @@
-use hash_index::crc::crc32;
-use hash_index::record::{Record, RecordHeader};
+use rustikv::crc::crc32;
+use rustikv::record::{Record, RecordHeader};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 

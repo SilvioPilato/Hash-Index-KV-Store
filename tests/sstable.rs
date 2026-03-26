@@ -1,5 +1,5 @@
-use hash_index::memtable::Memtable;
-use hash_index::sstable::{SSTable, get_sstables};
+use rustikv::memtable::Memtable;
+use rustikv::sstable::{SSTable, get_sstables};
 use std::{env, fs, io::ErrorKind, time::SystemTime};
 
 fn temp_dir(suffix: &str) -> String {

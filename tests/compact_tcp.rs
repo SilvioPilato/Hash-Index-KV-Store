@@ -1,4 +1,4 @@
-use hash_index::bffp::{ResponseStatus, decode_response_frame};
+use rustikv::bffp::{ResponseStatus, decode_response_frame};
 use std::{
     env, fs,
     io::{Cursor, Read, Write},
@@ -19,7 +19,7 @@ impl ServerProcess {
     fn start(db_path: &str) -> Self {
         let _ = fs::create_dir_all(db_path);
 
-        let child = Command::new(env!("CARGO_BIN_EXE_hash-index"))
+        let child = Command::new(env!("CARGO_BIN_EXE_rustikv"))
             .arg(db_path)
             .arg("--tcp")
             .arg("0.0.0.0:0")

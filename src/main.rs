@@ -1,10 +1,10 @@
-use hash_index::bffp::{Command, ResponseStatus, decode_input_frame, encode_frame};
-use hash_index::engine::StorageEngine;
-use hash_index::kvengine::KVEngine;
-use hash_index::lsmengine::LsmEngine;
-use hash_index::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
-use hash_index::settings::{EngineType, Settings};
-use hash_index::stats::Stats;
+use rustikv::bffp::{Command, ResponseStatus, decode_input_frame, encode_frame};
+use rustikv::engine::StorageEngine;
+use rustikv::kvengine::KVEngine;
+use rustikv::lsmengine::LsmEngine;
+use rustikv::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
+use rustikv::settings::{EngineType, Settings};
+use rustikv::stats::Stats;
 use std::env;
 use std::io::{self};
 use std::{
@@ -16,7 +16,7 @@ use std::{
 };
 
 fn verbose_logging_enabled() -> bool {
-    matches!(env::var("KV_STORE_VERBOSE"), Ok(value) if value == "1")
+    matches!(env::var("RUSTIKV_VERBOSE"), Ok(value) if value == "1")
 }
 
 fn log_verbose(message: impl AsRef<str>) {

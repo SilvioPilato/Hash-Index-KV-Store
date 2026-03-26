@@ -1,4 +1,4 @@
-use hash_index::bloom::BloomFilter;
+use rustikv::bloom::BloomFilter;
 
 #[test]
 fn inserted_key_is_found() {

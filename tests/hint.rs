@@ -1,7 +1,7 @@
-use hash_index::engine::StorageEngine;
-use hash_index::hint::{Hint, HintEntry};
-use hash_index::kvengine::KVEngine;
-use hash_index::settings::FSyncStrategy;
+use rustikv::engine::StorageEngine;
+use rustikv::hint::{Hint, HintEntry};
+use rustikv::kvengine::KVEngine;
+use rustikv::settings::FSyncStrategy;
 use std::fs;
 use std::path::PathBuf;
 use std::{env, time::SystemTime};

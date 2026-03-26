@@ -1,4 +1,4 @@
-use hash_index::memtable::Memtable;
+use rustikv::memtable::Memtable;
 
 #[test]
 fn insert_and_entry() {

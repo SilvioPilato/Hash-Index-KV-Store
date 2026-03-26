@@ -1,4 +1,4 @@
-# Hash Index KV Store
+# rustikv
 
 **⚠️ Experimental Project: This software is for experimental purposes only and is not intended for production use. Use at your own risk.**
 
@@ -54,7 +54,7 @@ To run all tests:
 cargo test
 ```
 
-The TCP server keeps its per-request debug logging off by default, so integration tests stay quiet. If you want the old connection and command logs while debugging, run the server with `KV_STORE_VERBOSE=1`.
+The TCP server keeps its per-request debug logging off by default, so integration tests stay quiet. If you want the old connection and command logs while debugging, run the server with `RUSTIKV_VERBOSE=1`.
 
 ## Commands
 

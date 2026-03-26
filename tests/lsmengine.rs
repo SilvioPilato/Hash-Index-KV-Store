@@ -1,5 +1,5 @@
-use hash_index::engine::StorageEngine;
-use hash_index::lsmengine::LsmEngine;
+use rustikv::engine::StorageEngine;
+use rustikv::lsmengine::LsmEngine;
 use std::{env, fs, time::SystemTime};
 
 fn temp_dir(suffix: &str) -> String {

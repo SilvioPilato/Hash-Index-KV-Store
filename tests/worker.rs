@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::{env, time::SystemTime};
 
-use hash_index::engine::StorageEngine;
-use hash_index::kvengine::KVEngine;
-use hash_index::settings::FSyncStrategy;
-use hash_index::worker::BackgroundWorker;
+use rustikv::engine::StorageEngine;
+use rustikv::kvengine::KVEngine;
+use rustikv::settings::FSyncStrategy;
+use rustikv::worker::BackgroundWorker;
 
 fn temp_db_path(suffix: &str) -> String {
     let nanos = SystemTime::now()
