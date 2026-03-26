@@ -46,10 +46,6 @@ Write tests that simulate crashes mid-write and mid-compaction (e.g., truncated 
 
 Extend the `STATS` command to include which engine is active, segment count, total data size on disk, and (for LSM) current memtable size. Makes the storage internals visible during interactive exploration.
 
-## #41 — CLI client (`kvcli`)
-
-Add a `cargo run --bin kvcli` binary that connects to the server and provides a REPL-style interface for sending commands. Avoids the netcat "blank line after each command" friction and provides a nicer interactive experience.
-
 ## #42 — Load generator / benchmark tool (`kvbench`)
 
 Add a `cargo run --bin kvbench` binary that writes N random keys, reads them back, and prints throughput and latency stats. The key value: run it against `--engine kv` then `--engine lsm` to compare and make the write-amplification and read-amplification tradeoffs from DDIA Ch. 3 tangible.
@@ -103,6 +99,12 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
 # Closed Tasks
+
+## #41 — CLI client (`rustikli`)
+
+Add a `cargo run --bin rustikli` binary that connects to the server and provides a REPL-style interface for sending commands. Avoids the netcat "blank line after each command" friction and provides a nicer interactive experience.
+
+PR: https://github.com/SilvioPilato/rustikv/pull/28
 
 ## #49 — `EXISTS` command
 

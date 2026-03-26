@@ -79,8 +79,8 @@ fn main() -> io::Result<()> {
                     shared_stats
                         .active_connections
                         .fetch_add(1, Ordering::Relaxed);
-                    let response = handle_stream(
-                        &stream,
+                    handle_stream(
+                        &mut stream,
                         shared_db,
                         &shared_stats,
                         settings.compaction_ratio,
@@ -89,9 +89,6 @@ fn main() -> io::Result<()> {
                     shared_stats
                         .active_connections
                         .fetch_sub(1, Ordering::Relaxed);
-                    stream
-                        .write_all(&response)
-                        .expect("Could not write response to stream");
                 });
             }
             Err(e) => {
@@ -103,166 +100,179 @@ fn main() -> io::Result<()> {
 }
 
 fn handle_stream(
-    stream: &TcpStream,
+    stream: &mut TcpStream,
     database: Arc<RwLock<Box<dyn StorageEngine>>>,
     stats: &Arc<Stats>,
     compaction_ratio: f32,
     compaction_max_segment: usize,
-) -> Vec<u8> {
+) {
     handle_stream_inner(
         stream,
-        database,
+        database.clone(),
         stats,
         compaction_ratio,
         compaction_max_segment,
     )
-    .unwrap_or_else(|e| encode_frame(ResponseStatus::Error, &[e.to_string()]))
+    .unwrap_or_else(|e| {
+        eprintln!("Error: {}", e);
+    });
 }
 
 fn handle_stream_inner(
-    stream: &TcpStream,
+    stream: &mut TcpStream,
     database: Arc<RwLock<Box<dyn StorageEngine>>>,
     stats: &Arc<Stats>,
     compaction_ratio: f32,
     compaction_max_segment: usize,
-) -> io::Result<Vec<u8>> {
+) -> io::Result<()> {
     const MAX_REQUEST_BYTES: usize = MAX_KEY_SIZE + MAX_VALUE_SIZE + 1024;
-    let mut reader = BufReader::new(stream);
-    let mut len_buf = [0u8; 4];
-    if reader.read_exact(&mut len_buf).is_err() {
-        return Ok(encode_frame(
-            ResponseStatus::Error,
-            &["Received empty request.".to_string()],
-        ));
-    }
-    let frame_len = u32::from_be_bytes(len_buf) as usize;
-    if frame_len > MAX_REQUEST_BYTES {
-        return Ok(encode_frame(
-            ResponseStatus::Error,
-            &[format!("Frame too large: {} bytes", frame_len)],
-        ));
-    }
-    let mut payload = vec![0u8; frame_len];
-    reader.read_exact(&mut payload)?;
-    let mut buf = Vec::with_capacity(4 + frame_len);
-    buf.extend_from_slice(&len_buf);
-    buf.extend_from_slice(&payload);
+    let mut buf_stream = BufReader::new(&mut *stream);
 
-    let cmd = decode_input_frame(&buf)?;
+    loop {
+        let mut len_buf = [0u8; 4];
 
-    Ok(match cmd {
-        Command::Write(key, value) => {
-            log_verbose(format!(
-                "Parsed WRITE command: key='{}', value='{}'",
-                key, value
-            ));
-            if stats.compacting.load(Ordering::Relaxed) {
-                stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
-            }
-            let lock_start = Instant::now();
-            let result = {
-                let mut db = database.write().unwrap();
-                db.set(&key, &value)
-            };
-            let lock_elapsed = lock_start.elapsed().as_millis() as u64;
-            stats
-                .write_blocked_total_ms
-                .fetch_add(lock_elapsed, Ordering::Relaxed);
-            match result {
-                Ok(_) => {
-                    stats.writes.fetch_add(1, Ordering::Relaxed);
-                    maybe_trigger_compaction(
-                        database.clone(),
-                        stats,
-                        compaction_ratio,
-                        compaction_max_segment,
-                    );
-                    encode_frame(ResponseStatus::Ok, &[])
-                }
-                Err(err) => encode_frame(ResponseStatus::Error, &[err.to_string()]),
-            }
+        match buf_stream.read_exact(&mut len_buf) {
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break, // client disconnected
+            Err(e) => return Err(e),
+            Ok(()) => {}
         }
-        Command::Read(key) => {
-            log_verbose(format!("Parsed READ command: key='{}'", key));
-            let db = database.read().unwrap();
-            stats.reads.fetch_add(1, Ordering::Relaxed);
-            match db.get(&key) {
-                Ok(Some((_, v))) => encode_frame(ResponseStatus::Ok, &[v]),
-                Ok(None) => encode_frame(ResponseStatus::NotFound, &[]),
-                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
-            }
-        }
-        Command::Delete(key) => {
-            log_verbose(format!("Parsed DELETE command: key='{}'", key));
-            let result = {
-                let mut db = database.write().unwrap();
-                db.delete(&key)
-            };
-            match result {
-                Ok(Some(())) => {
-                    stats.deletes.fetch_add(1, Ordering::Relaxed);
-                    maybe_trigger_compaction(
-                        database.clone(),
-                        stats,
-                        compaction_ratio,
-                        compaction_max_segment,
-                    );
-                    encode_frame(ResponseStatus::Ok, &[])
-                }
-                Ok(None) => encode_frame(ResponseStatus::NotFound, &[]),
-                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
-            }
-        }
-        Command::Compact => {
-            log_verbose("Parsed COMPACT command");
-            if stats
-                .compacting
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-            {
-                return Ok(encode_frame(ResponseStatus::Noop, &[]));
-            }
-            stats
-                .last_compact_start_ms
-                .store(Stats::now_ms(), Ordering::Relaxed);
-            let db_clone = Arc::clone(&database);
-            let stats_clone = Arc::clone(stats);
-            thread::spawn(move || {
-                let mut db = db_clone.write().unwrap();
-                db.compact().unwrap();
-
-                stats_clone
-                    .last_compact_end_ms
-                    .store(Stats::now_ms(), Ordering::Relaxed);
-                stats_clone.compacting.store(false, Ordering::Release);
-                stats_clone.compaction_count.fetch_add(1, Ordering::Relaxed);
-            });
-            encode_frame(ResponseStatus::Ok, &[])
-        }
-        Command::Stats => encode_frame(ResponseStatus::Ok, &[stats.snapshot()]),
-        Command::Invalid(op_code) => {
-            log_verbose(format!("Invalid op code: {}", op_code));
-            encode_frame(
+        let frame_len = u32::from_be_bytes(len_buf) as usize;
+        if frame_len > MAX_REQUEST_BYTES {
+            let response = encode_frame(
                 ResponseStatus::Error,
-                &[format!("Invalid op code: {}", op_code)],
-            )
+                &[format!("Frame too large: {} bytes", frame_len)],
+            );
+            buf_stream.get_mut().write_all(&response)?;
+            continue;
         }
-        Command::List => {
-            let db = database.read().unwrap();
-            match db.list_keys() {
-                Ok(keys) => encode_frame(ResponseStatus::Ok, &keys),
-                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+        let mut payload = vec![0u8; frame_len];
+        buf_stream.read_exact(&mut payload)?;
+        let mut buf = Vec::with_capacity(4 + frame_len);
+        buf.extend_from_slice(&len_buf);
+        buf.extend_from_slice(&payload);
+
+        let cmd = decode_input_frame(&buf)?;
+
+        let response = match cmd {
+            Command::Write(key, value) => {
+                log_verbose(format!(
+                    "Parsed WRITE command: key='{}', value='{}'",
+                    key, value
+                ));
+                if stats.compacting.load(Ordering::Relaxed) {
+                    stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
+                }
+                let lock_start = Instant::now();
+                let result = {
+                    let mut db = database.write().unwrap();
+                    db.set(&key, &value)
+                };
+                let lock_elapsed = lock_start.elapsed().as_millis() as u64;
+                stats
+                    .write_blocked_total_ms
+                    .fetch_add(lock_elapsed, Ordering::Relaxed);
+                match result {
+                    Ok(_) => {
+                        stats.writes.fetch_add(1, Ordering::Relaxed);
+                        maybe_trigger_compaction(
+                            database.clone(),
+                            stats,
+                            compaction_ratio,
+                            compaction_max_segment,
+                        );
+                        encode_frame(ResponseStatus::Ok, &[])
+                    }
+                    Err(err) => encode_frame(ResponseStatus::Error, &[err.to_string()]),
+                }
             }
-        }
-        Command::Exists(key) => {
-            let db = database.read().unwrap();
-            if db.exists(&key) {
+            Command::Read(key) => {
+                log_verbose(format!("Parsed READ command: key='{}'", key));
+                let db = database.read().unwrap();
+                stats.reads.fetch_add(1, Ordering::Relaxed);
+                match db.get(&key) {
+                    Ok(Some((_, v))) => encode_frame(ResponseStatus::Ok, &[v]),
+                    Ok(None) => encode_frame(ResponseStatus::NotFound, &[]),
+                    Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+                }
+            }
+            Command::Delete(key) => {
+                log_verbose(format!("Parsed DELETE command: key='{}'", key));
+                let result = {
+                    let mut db = database.write().unwrap();
+                    db.delete(&key)
+                };
+                match result {
+                    Ok(Some(())) => {
+                        stats.deletes.fetch_add(1, Ordering::Relaxed);
+                        maybe_trigger_compaction(
+                            database.clone(),
+                            stats,
+                            compaction_ratio,
+                            compaction_max_segment,
+                        );
+                        encode_frame(ResponseStatus::Ok, &[])
+                    }
+                    Ok(None) => encode_frame(ResponseStatus::NotFound, &[]),
+                    Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+                }
+            }
+            Command::Compact => {
+                log_verbose("Parsed COMPACT command");
+                if stats
+                    .compacting
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    buf_stream
+                        .get_mut()
+                        .write_all(&encode_frame(ResponseStatus::Noop, &[]))?;
+                    continue;
+                }
+                stats
+                    .last_compact_start_ms
+                    .store(Stats::now_ms(), Ordering::Relaxed);
+                let db_clone = Arc::clone(&database);
+                let stats_clone = Arc::clone(stats);
+                thread::spawn(move || {
+                    let mut db = db_clone.write().unwrap();
+                    db.compact().unwrap();
+
+                    stats_clone
+                        .last_compact_end_ms
+                        .store(Stats::now_ms(), Ordering::Relaxed);
+                    stats_clone.compacting.store(false, Ordering::Release);
+                    stats_clone.compaction_count.fetch_add(1, Ordering::Relaxed);
+                });
                 encode_frame(ResponseStatus::Ok, &[])
-            } else {
-                encode_frame(ResponseStatus::NotFound, &[])
             }
-        }
-    })
+            Command::Stats => encode_frame(ResponseStatus::Ok, &[stats.snapshot()]),
+            Command::Invalid(op_code) => {
+                log_verbose(format!("Invalid op code: {}", op_code));
+                encode_frame(
+                    ResponseStatus::Error,
+                    &[format!("Invalid op code: {}", op_code)],
+                )
+            }
+            Command::List => {
+                let db = database.read().unwrap();
+                match db.list_keys() {
+                    Ok(keys) => encode_frame(ResponseStatus::Ok, &keys),
+                    Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+                }
+            }
+            Command::Exists(key) => {
+                let db = database.read().unwrap();
+                if db.exists(&key) {
+                    encode_frame(ResponseStatus::Ok, &[])
+                } else {
+                    encode_frame(ResponseStatus::NotFound, &[])
+                }
+            }
+        };
+        buf_stream.get_mut().write_all(&response)?;
+    }
+
+    Ok(())
 }
 
 fn maybe_trigger_compaction(
