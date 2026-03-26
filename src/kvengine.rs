@@ -390,4 +390,8 @@ impl StorageEngine for KVEngine {
     fn list_keys(&self) -> io::Result<Vec<String>> {
         Ok(self.index.ls_keys().cloned().collect())
     }
+
+    fn exists(&self, key: &str) -> bool {
+        self.index.contains(key)
+    }
 }

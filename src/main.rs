@@ -254,6 +254,14 @@ fn handle_stream_inner(
                 Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
             }
         }
+        Command::Exists(key) => {
+            let db = database.read().unwrap();
+            if db.exists(&key) {
+                encode_frame(ResponseStatus::Ok, &[])
+            } else {
+                encode_frame(ResponseStatus::NotFound, &[])
+            }
+        }
     })
 }
 

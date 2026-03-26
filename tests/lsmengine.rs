@@ -319,6 +319,50 @@ fn wal_is_absent_after_flush() {
 }
 
 #[test]
+fn exists_returns_true_after_set() {
+    let dir = temp_dir("exists_true");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("k", "v").unwrap();
+    assert!(engine.exists("k"));
+}
+
+#[test]
+fn exists_returns_false_for_missing_key() {
+    let dir = temp_dir("exists_missing");
+    let engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    assert!(!engine.exists("nope"));
+}
+
+#[test]
+fn exists_returns_false_after_delete() {
+    let dir = temp_dir("exists_delete");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("k", "v").unwrap();
+    engine.delete("k").unwrap();
+    assert!(!engine.exists("k"));
+}
+
+#[test]
+fn exists_returns_true_for_flushed_key() {
+    // Key is flushed to an SSTable; exists must still find it via SSTable lookup
+    // (and the bloom filter must not produce a false negative).
+    let dir = temp_dir("exists_flushed");
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1, every write flushes
+    engine.set("k", "v").unwrap();
+    assert!(engine.exists("k"));
+}
+
+#[test]
+fn exists_returns_false_for_tombstoned_flushed_key() {
+    // Key written and flushed, then deleted (tombstone in memtable). exists must return false.
+    let dir = temp_dir("exists_tombstone");
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1, flushes on set
+    engine.set("k", "v").unwrap();
+    engine.delete("k").unwrap();
+    assert!(!engine.exists("k"));
+}
+
+#[test]
 fn list_keys_returns_all_live_keys() {
     let dir = temp_dir("list_keys");
     let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();

@@ -30,6 +30,10 @@ impl HashIndex {
         self.hashmap.get(key)
     }
 
+    pub fn contains(&self, key: &str) -> bool {
+        self.hashmap.contains_key(key)
+    }
+
     /// Inserts or updates the byte offset for the given key.
     pub fn set(
         &mut self,

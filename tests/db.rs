@@ -370,3 +370,42 @@ fn list_keys_empty_db() {
     .unwrap();
     assert_eq!(db.list_keys().unwrap(), Vec::<String>::new());
 }
+
+#[test]
+fn exists_returns_true_after_set() {
+    let mut db = KVEngine::new(
+        &temp_db_path("exists_true"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+    db.set("k", "v").unwrap();
+    assert!(db.exists("k"));
+}
+
+#[test]
+fn exists_returns_false_for_missing_key() {
+    let db = KVEngine::new(
+        &temp_db_path("exists_missing"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+    assert!(!db.exists("nope"));
+}
+
+#[test]
+fn exists_returns_false_after_delete() {
+    let mut db = KVEngine::new(
+        &temp_db_path("exists_delete"),
+        "test",
+        DEFAULT_MAX_SEGMENT_BYTES,
+        FSyncStrategy::Never,
+    )
+    .unwrap();
+    db.set("k", "v").unwrap();
+    db.delete("k").unwrap();
+    assert!(!db.exists("k"));
+}
