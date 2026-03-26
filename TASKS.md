@@ -1,5 +1,9 @@
 # In Progress
 
+## #41 — CLI client (`rustikli`)
+
+Add a `cargo run --bin rustikli` binary that connects to the server and provides a REPL-style interface for sending commands. Avoids the netcat "blank line after each command" friction and provides a nicer interactive experience.
+
 # Open Tasks
 
 ## #26 — Persist Bloom filters and sparse index to disk (DDIA Ch. 3)
@@ -46,9 +50,9 @@ Write tests that simulate crashes mid-write and mid-compaction (e.g., truncated 
 
 Extend the `STATS` command to include which engine is active, segment count, total data size on disk, and (for LSM) current memtable size. Makes the storage internals visible during interactive exploration.
 
-## #41 — CLI client (`kvcli`)
+## #41 — CLI client (`rustikli`)
 
-Add a `cargo run --bin kvcli` binary that connects to the server and provides a REPL-style interface for sending commands. Avoids the netcat "blank line after each command" friction and provides a nicer interactive experience.
+Add a `cargo run --bin rustikli` binary that connects to the server and provides a REPL-style interface for sending commands. Avoids the netcat "blank line after each command" friction and provides a nicer interactive experience.
 
 ## #42 — Load generator / benchmark tool (`kvbench`)
 
