@@ -62,10 +62,6 @@ Add a TCP command that dumps internal storage state: segment file listing, index
 
 Add a `RANGE <start> <end>` TCP command that returns all key-value pairs whose keys fall in the inclusive range `[start, end]`. Implement it only on the LSM engine — the KV (Bitcask) engine returns an error, making the hash-index limitation tangible. The LSM implementation merges results from the memtable (`BTreeMap::range`) and all SSTable iterators, applying tombstone suppression and returning the newest value per key in sorted order. Add `fn range(&self, start: &str, end: &str) -> Result<Vec<(String, String)>, io::Error>` to the `StorageEngine` trait. Depends on #30 (binary protocol) for clean multi-value response framing.
 
-## #49 — `EXISTS` command
-
-Add an `EXISTS <key>` TCP command that returns `1` if the key exists, `0` if not — without fetching the value. Both engines support it. On LSM, the bloom filter makes this especially efficient (fast negative lookups). Useful as a standalone command and as a building block for conditional operations.
-
 ## #50 — `PREFIX` command (LSM only)
 
 Add a `PREFIX <prefix>` TCP command that returns all key-value pairs whose keys start with the given string. LSM-only — implemented as a range scan `[prefix, prefix\xff]` on the sorted memtable and SSTables. The KV engine returns an error. Depends on #48 (`RANGE`) since it's a specialisation of range scan. Depends on #30 (binary protocol).
@@ -107,6 +103,10 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
 # Closed Tasks
+
+## #49 — `EXISTS` command
+
+Add an `EXISTS <key>` TCP command that returns `1` if the key exists, `0` if not — without fetching the value. Both engines support it. On LSM, the bloom filter makes this especially efficient (fast negative lookups). Useful as a standalone command and as a building block for conditional operations.
 
 ## #39 — `LIST` command
 

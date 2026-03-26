@@ -170,4 +170,8 @@ impl StorageEngine for LsmEngine {
 
         Ok(keys.into_iter().collect())
     }
+
+    fn exists(&self, key: &str) -> bool {
+        self.get(key).map(|v| v.is_some()).unwrap_or(false)
+    }
 }

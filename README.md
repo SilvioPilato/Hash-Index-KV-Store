@@ -72,6 +72,7 @@ The easiest way to interact with the server is to build a client that uses the `
 | `COMPACT` | 4 | Triggers background compaction. Returns NOOP if already running |
 | `STATS` | 5 | Returns runtime counters as `key=value` pairs |
 | `LIST` | 6 | Returns all live keys as a list of strings |
+| `EXISTS <key>` | 7 | Returns OK if `key` exists, NOT_FOUND if absent. On LSM, uses the Bloom filter for fast negative lookups |
 
 ### STATS fields
 

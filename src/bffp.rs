@@ -16,6 +16,7 @@ pub enum Command {
     Compact,
     Stats,
     List,
+    Exists(String),
 }
 
 #[repr(u8)]
@@ -69,6 +70,7 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
         4 => Ok(Command::Compact),
         5 => Ok(Command::Stats),
         6 => Ok(Command::List),
+        7 => Ok(Command::Exists(read_key(&mut cur)?)),
         n => Ok(Command::Invalid(n)),
     }
 }

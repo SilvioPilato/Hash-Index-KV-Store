@@ -9,4 +9,5 @@ pub trait StorageEngine: Send + Sync {
     fn total_bytes(&self) -> u64;
     fn segment_count(&self) -> usize;
     fn list_keys(&self) -> io::Result<Vec<String>>;
+    fn exists(&self, key: &str) -> bool;
 }
