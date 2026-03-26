@@ -108,6 +108,8 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Add an `EXISTS <key>` TCP command that returns `1` if the key exists, `0` if not — without fetching the value. Both engines support it. On LSM, the bloom filter makes this especially efficient (fast negative lookups). Useful as a standalone command and as a building block for conditional operations.
 
+PR: https://github.com/SilvioPilato/Hash-Index-KV-Store/pull/27
+
 ## #39 — `LIST` command
 
 There is currently no way to see what keys exist. Wire a `LIST` TCP command through the `StorageEngine` trait. `KVEngine` already has `ls_keys()` via `HashIndex`; `Memtable` has `entries()` for the LSM side. Return all keys to the client.
