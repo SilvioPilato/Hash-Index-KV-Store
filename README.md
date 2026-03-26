@@ -56,11 +56,35 @@ cargo test
 
 The TCP server keeps its per-request debug logging off by default, so integration tests stay quiet. If you want the old connection and command logs while debugging, run the server with `RUSTIKV_VERBOSE=1`.
 
+## Client (rustikli)
+
+`rustikli` is an interactive REPL client for the server:
+
+```sh
+cargo run --bin rustikli -- [--host <addr>]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-h`, `--host` | Server TCP address | `127.0.0.1:6666` |
+
+Once connected, type commands directly:
+
+```text
+rustikli> WRITE mykey hello world
+rustikli> READ mykey
+hello world
+rustikli> EXISTS mykey
+rustikli> LIST
+rustikli> DELETE mykey
+rustikli> STATS
+rustikli> COMPACT
+rustikli> QUIT
+```
+
 ## Commands
 
 The server uses a **binary length-prefixed protocol** (not plain text). Each request is a frame: a 4-byte big-endian payload length, followed by a 1-byte op code, followed by op-specific fields. Responses use the same framing with a 1-byte status byte.
-
-The easiest way to interact with the server is to build a client that uses the `bffp` module's `encode_frame`/`decode_response_frame` helpers, or use `netcat`/`telnet` with a tool that can send raw bytes.
 
 ### Supported commands
 

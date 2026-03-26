@@ -52,6 +52,8 @@ Do **not** commit or open a PR until all three pass. If a step fails, fix the is
 | Path | Purpose |
 |------|---------|
 | `src/main.rs` | TCP server, command parsing, request handling |
+| `src/bin/rustikli.rs` | Interactive REPL client binary |
+| `src/cli.rs` | `parse_command` — input parsing for rustikli, testable from `tests/` |
 | `src/engine.rs` | `StorageEngine` trait (`get`/`set`/`delete`/`compact`/`list_keys` + `Send + Sync`) |
 | `src/bffp.rs` | Binary frame fixed protocol — length-prefixed framing, encode/decode, op codes |
 | `src/kvengine.rs` | Bitcask-style engine — hash index, append-only segments, hint files |
