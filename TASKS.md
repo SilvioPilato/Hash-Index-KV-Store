@@ -86,10 +86,6 @@ Add an `INCR <key>` TCP command that atomically increments an integer value stor
 
 Add a `TTL <key> <seconds>` TCP command that associates an expiry timestamp with a key. Expired keys are invisible to reads and cleaned up during compaction. Requires storing the expiry alongside the value in the record format (or as a separate metadata field). Good exercise in extending the on-disk format and compaction logic.
 
-## #57 — `PING` command
-
-Add a `PING` TCP command that returns `PONG`. Trivial to implement — useful as a health check and connection keep-alive. Standard across Redis, Memcached, and most TCP servers.
-
 ## #58 — `FLUSH` command (LSM only)
 
 Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTable, regardless of whether the flush threshold has been reached. LSM-only. Useful for testing, observability, and ensuring durability on demand. The KV engine returns an error (it has no memtable to flush).
@@ -103,6 +99,8 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 ## #57 — `PING` command
 
 Add a `PING` TCP command that returns `PONG`. Trivial to implement — useful as a health check and connection keep-alive. Standard across Redis, Memcached, and most TCP servers.
+
+PR: https://github.com/SilvioPilato/rustikv/pull/29
 
 ## #41 — CLI client (`rustikli`)
 
