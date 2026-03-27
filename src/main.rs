@@ -268,6 +268,7 @@ fn handle_stream_inner(
                     encode_frame(ResponseStatus::NotFound, &[])
                 }
             }
+            Command::Ping => encode_frame(ResponseStatus::Ok, &["PONG".to_string()]),
         };
         buf_stream.get_mut().write_all(&response)?;
     }

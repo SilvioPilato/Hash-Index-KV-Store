@@ -17,6 +17,7 @@ pub enum Command {
     Stats,
     List,
     Exists(String),
+    Ping,
 }
 
 #[repr(u8)]
@@ -28,6 +29,7 @@ pub enum OpCode {
     Stats = 5,
     List = 6,
     Exists = 7,
+    Ping = 8,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -42,6 +44,7 @@ impl TryFrom<u8> for OpCode {
             5 => Ok(OpCode::Stats),
             6 => Ok(OpCode::List),
             7 => Ok(OpCode::Exists),
+            8 => Ok(OpCode::Ping),
             n => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unknown op code: {n}"),
@@ -102,6 +105,8 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
         Ok(OpCode::Stats) => Ok(Command::Stats),
         Ok(OpCode::List) => Ok(Command::List),
         Ok(OpCode::Exists) => Ok(Command::Exists(read_key(&mut cur)?)),
+        Ok(OpCode::Ping) => Ok(Command::Ping),
+
         Err(_) => Ok(Command::Invalid(op_buf[0])),
     }
 }
@@ -238,6 +243,12 @@ pub fn encode_command(command: Command) -> Vec<u8> {
 
             payload.write_all(key.as_bytes()).unwrap();
 
+            payload.into_inner()
+        }
+        Command::Ping => {
+            let total_len = OP_CODE_SIZE as u32;
+            payload.write_all(&total_len.to_be_bytes()).unwrap();
+            payload.write_all(&[OpCode::Ping as u8]).unwrap();
             payload.into_inner()
         }
         Command::Invalid(_) => unreachable!("Invalid is a decode-only sentinel, never encoded"),

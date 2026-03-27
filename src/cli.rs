@@ -44,6 +44,7 @@ pub fn parse_command(line: &str) -> ParseResult {
         "COMPACT" => ParseResult::Cmd(Command::Compact),
         "STATS" => ParseResult::Cmd(Command::Stats),
         "LIST" => ParseResult::Cmd(Command::List),
+        "PING" => ParseResult::Cmd(Command::Ping),
         "QUIT" => ParseResult::Quit,
         cmd => ParseResult::InvalidInput(format!("Unknown command: {cmd}")),
     }
