@@ -100,6 +100,10 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 # Closed Tasks
 
+## #57 — `PING` command
+
+Add a `PING` TCP command that returns `PONG`. Trivial to implement — useful as a health check and connection keep-alive. Standard across Redis, Memcached, and most TCP servers.
+
 ## #41 — CLI client (`rustikli`)
 
 Add a `cargo run --bin rustikli` binary that connects to the server and provides a REPL-style interface for sending commands. Avoids the netcat "blank line after each command" friction and provides a nicer interactive experience.
