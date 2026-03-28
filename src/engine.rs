@@ -10,4 +10,6 @@ pub trait StorageEngine: Send + Sync {
     fn segment_count(&self) -> usize;
     fn list_keys(&self) -> io::Result<Vec<String>>;
     fn exists(&self, key: &str) -> bool;
+    fn mget(&self, keys: Vec<String>) -> Result<Vec<(String, Option<String>)>, std::io::Error>;
+    fn mset(&mut self, keys: Vec<(String, String)>) -> Result<(), std::io::Error>;
 }

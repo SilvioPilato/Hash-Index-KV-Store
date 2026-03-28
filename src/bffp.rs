@@ -18,6 +18,8 @@ pub enum Command {
     List,
     Exists(String),
     Ping,
+    Mget(Vec<String>),
+    Mset(Vec<(String, String)>),
 }
 
 #[repr(u8)]
@@ -30,6 +32,8 @@ pub enum OpCode {
     List = 6,
     Exists = 7,
     Ping = 8,
+    Mget = 9,
+    Mset = 10,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -45,6 +49,8 @@ impl TryFrom<u8> for OpCode {
             6 => Ok(OpCode::List),
             7 => Ok(OpCode::Exists),
             8 => Ok(OpCode::Ping),
+            9 => Ok(OpCode::Mget),
+            10 => Ok(OpCode::Mset),
             n => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unknown op code: {n}"),
@@ -106,7 +112,26 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
         Ok(OpCode::List) => Ok(Command::List),
         Ok(OpCode::Exists) => Ok(Command::Exists(read_key(&mut cur)?)),
         Ok(OpCode::Ping) => Ok(Command::Ping),
+        Ok(OpCode::Mget) => {
+            let mut items = Vec::new();
+            while cur.position() < _total_len as u64 + FRAME_LEN_SIZE {
+                let key = read_key(&mut cur)?;
+                items.push(key);
+            }
 
+            Ok(Command::Mget(items))
+        }
+        Ok(OpCode::Mset) => {
+            let mut items = Vec::new();
+            while cur.position() < _total_len as u64 + FRAME_LEN_SIZE {
+                let key = read_key(&mut cur)?;
+                let value = read_value(&mut cur)?;
+
+                items.push((key, value));
+            }
+
+            Ok(Command::Mset(items))
+        }
         Err(_) => Ok(Command::Invalid(op_buf[0])),
     }
 }
@@ -252,6 +277,47 @@ pub fn encode_command(command: Command) -> Vec<u8> {
             payload.into_inner()
         }
         Command::Invalid(_) => unreachable!("Invalid is a decode-only sentinel, never encoded"),
+        Command::Mget(keys) => {
+            let mut total_len = OP_CODE_SIZE + KEY_LEN_SIZE * keys.len();
+            for key in &keys {
+                total_len += key.len();
+            }
+
+            payload
+                .write_all(&(total_len as u32).to_be_bytes())
+                .unwrap();
+            payload.write_all(&[OpCode::Mget as u8]).unwrap();
+
+            for key in keys {
+                let key_len = key.len() as u16;
+                payload.write_all(&key_len.to_be_bytes()).unwrap();
+                payload.write_all(key.as_bytes()).unwrap();
+            }
+
+            payload.into_inner()
+        }
+        Command::Mset(items) => {
+            let mut total_len = OP_CODE_SIZE + (KEY_LEN_SIZE + VALUE_LEN_SIZE) * items.len();
+            for (k, v) in &items {
+                total_len += k.len() + v.len();
+            }
+
+            payload
+                .write_all(&(total_len as u32).to_be_bytes())
+                .unwrap();
+            payload.write_all(&[OpCode::Mset as u8]).unwrap();
+
+            for (k, v) in items {
+                let key_len = k.len() as u16;
+                payload.write_all(&key_len.to_be_bytes()).unwrap();
+                payload.write_all(k.as_bytes()).unwrap();
+                let val_len = v.len() as u32;
+                payload.write_all(&val_len.to_be_bytes()).unwrap();
+                payload.write_all(v.as_bytes()).unwrap();
+            }
+
+            payload.into_inner()
+        }
     }
 }
 

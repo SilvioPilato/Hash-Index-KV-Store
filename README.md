@@ -97,6 +97,9 @@ The server uses a **binary length-prefixed protocol** (not plain text). Each req
 | `STATS` | 5 | Returns runtime counters as `key=value` pairs |
 | `LIST` | 6 | Returns all live keys as a list of strings |
 | `EXISTS <key>` | 7 | Returns OK if `key` exists, NOT_FOUND if absent. On LSM, uses the Bloom filter for fast negative lookups |
+| `PING` | 8 | Returns `PONG`. Useful as a health check |
+| `MGET <key1> <key2> ...` | 9 | Fetches multiple keys in one round trip. Response is a flat list of `key, value` pairs; missing keys return a null byte (`\0`) as the value |
+| `MSET <k1> <v1> <k2> <v2> ...` | 10 | Writes multiple key-value pairs in one round trip |
 
 ### STATS fields
 
