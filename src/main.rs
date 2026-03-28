@@ -269,6 +269,57 @@ fn handle_stream_inner(
                 }
             }
             Command::Ping => encode_frame(ResponseStatus::Ok, &["PONG".to_string()]),
+            Command::Mget(keys) => {
+                log_verbose("Parsed MGET command");
+                let db = database.read().unwrap();
+                match db.mget(keys) {
+                    Ok(items) => {
+                        let key_count = items.len() as u64;
+
+                        let flat: Vec<String> = items
+                            .into_iter()
+                            .flat_map(|(k, v)| match v {
+                                Some(value) => [k, value],
+                                None => [k, String::from("\0")],
+                            })
+                            .collect();
+                        stats.reads.fetch_add(key_count, Ordering::Relaxed);
+                        encode_frame(ResponseStatus::Ok, &flat)
+                    }
+                    Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+                }
+            }
+            Command::Mset(items) => {
+                log_verbose("Parsed MSET command");
+                if stats.compacting.load(Ordering::Relaxed) {
+                    stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
+                }
+                let item_count = items.len() as u64;
+
+                let lock_start = Instant::now();
+                let result = {
+                    let mut db = database.write().unwrap();
+                    db.mset(items)
+                };
+                let lock_elapsed = lock_start.elapsed().as_millis() as u64;
+                stats
+                    .write_blocked_total_ms
+                    .fetch_add(lock_elapsed, Ordering::Relaxed);
+
+                match result {
+                    Ok(_) => {
+                        stats.writes.fetch_add(item_count, Ordering::Relaxed);
+                        maybe_trigger_compaction(
+                            database.clone(),
+                            stats,
+                            compaction_ratio,
+                            compaction_max_segment,
+                        );
+                        encode_frame(ResponseStatus::Ok, &[])
+                    }
+                    Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+                }
+            }
         };
         buf_stream.get_mut().write_all(&response)?;
     }

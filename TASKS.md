@@ -70,14 +70,6 @@ Add a `COUNT <start> <end>` TCP command that returns the number of live keys in 
 
 Add `FIRST` and `LAST` TCP commands that return the lexicographically smallest and largest live keys (with their values). LSM-only — trivially answered from the `BTreeMap` memtable and the first/last entries of the oldest/newest SSTables. The KV engine returns an error.
 
-## #53 — `MGET` command
-
-Add a `MGET <key1> <key2> ...` TCP command that fetches multiple keys in a single round trip and returns their values (or null/missing markers for absent keys). Supported by both engines. Depends on #30 (binary protocol) for multi-value response framing.
-
-## #54 — `MSET` command
-
-Add a `MSET <k1> <v1> <k2> <v2> ...` TCP command that writes multiple key-value pairs atomically in a single round trip. Supported by both engines. Reduces client-server overhead for bulk writes.
-
 ## #55 — `INCR` command
 
 Add an `INCR <key>` TCP command that atomically increments an integer value stored at a key (creating it at 1 if absent). Returns the new value. Teaches read-modify-write atomicity — must be handled under the engine's write lock to avoid races. Supported by both engines.
@@ -95,6 +87,18 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
 # Closed Tasks
+
+## #53 — `MGET` command
+
+Add a `MGET <key1> <key2> ...` TCP command that fetches multiple keys in a single round trip and returns their values (or null/missing markers for absent keys). Supported by both engines. Depends on #30 (binary protocol) for multi-value response framing.
+
+PR: TBD
+
+## #54 — `MSET` command
+
+Add a `MSET <k1> <v1> <k2> <v2> ...` TCP command that writes multiple key-value pairs atomically in a single round trip. Supported by both engines. Reduces client-server overhead for bulk writes.
+
+PR: TBD
 
 ## #57 — `PING` command
 

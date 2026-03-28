@@ -46,6 +46,31 @@ pub fn parse_command(line: &str) -> ParseResult {
         "LIST" => ParseResult::Cmd(Command::List),
         "PING" => ParseResult::Cmd(Command::Ping),
         "QUIT" => ParseResult::Quit,
+        "MGET" => {
+            if words.len() < 2 {
+                ParseResult::InvalidInput("Usage: MGET <key1> <key2> <keyn>".to_string())
+            } else {
+                let keys: Vec<String> = words[1..].iter().map(|k| k.to_string()).collect();
+                ParseResult::Cmd(Command::Mget(keys))
+            }
+        }
+        "MSET" => {
+            if words.len() < 3 {
+                ParseResult::InvalidInput("Usage: MSET <key1> <value1> <keyn> <valuen>".to_string())
+            } else {
+                let pairs: Vec<(String, String)> = words[1..]
+                    .chunks_exact(2)
+                    .filter_map(|chunk| {
+                        if let [k, v] = chunk {
+                            Some((k.to_string(), v.to_string()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                ParseResult::Cmd(Command::Mset(pairs))
+            }
+        }
         cmd => ParseResult::InvalidInput(format!("Unknown command: {cmd}")),
     }
 }

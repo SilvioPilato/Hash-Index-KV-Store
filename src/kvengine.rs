@@ -394,4 +394,28 @@ impl StorageEngine for KVEngine {
     fn exists(&self, key: &str) -> bool {
         self.index.contains(key)
     }
+
+    fn mget(&self, keys: Vec<String>) -> Result<Vec<(String, Option<String>)>, std::io::Error> {
+        let mut res: Vec<(String, Option<String>)> = Vec::new();
+        for key in keys {
+            match self.get(&key)? {
+                Some((k, v)) => {
+                    res.push((k, Some(v)));
+                }
+                None => {
+                    res.push((key, None));
+                }
+            }
+        }
+
+        Ok(res)
+    }
+
+    fn mset(&mut self, items: Vec<(String, String)>) -> Result<(), std::io::Error> {
+        for (k, v) in items {
+            self.set(&k, &v)?;
+        }
+
+        Ok(())
+    }
 }
