@@ -92,13 +92,13 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Add a `MGET <key1> <key2> ...` TCP command that fetches multiple keys in a single round trip and returns their values (or null/missing markers for absent keys). Supported by both engines. Depends on #30 (binary protocol) for multi-value response framing.
 
-PR: TBD
+PR: <https://github.com/SilvioPilato/rustikv/pull/30>
 
 ## #54 — `MSET` command
 
 Add a `MSET <k1> <v1> <k2> <v2> ...` TCP command that writes multiple key-value pairs atomically in a single round trip. Supported by both engines. Reduces client-server overhead for bulk writes.
 
-PR: TBD
+PR: <https://github.com/SilvioPilato/rustikv/pull/30>
 
 ## #57 — `PING` command
 
