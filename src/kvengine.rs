@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -417,5 +418,9 @@ impl StorageEngine for KVEngine {
         }
 
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

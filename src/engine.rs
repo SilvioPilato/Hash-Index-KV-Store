@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::io;
 
 pub trait StorageEngine: Send + Sync {
@@ -12,4 +13,9 @@ pub trait StorageEngine: Send + Sync {
     fn exists(&self, key: &str) -> bool;
     fn mget(&self, keys: Vec<String>) -> Result<Vec<(String, Option<String>)>, std::io::Error>;
     fn mset(&mut self, keys: Vec<(String, String)>) -> Result<(), std::io::Error>;
+    fn as_any(&self) -> &dyn Any;
+}
+
+pub trait RangeScan {
+    fn range(&self, start: &str, end: &str) -> io::Result<Vec<(String, String)>>;
 }

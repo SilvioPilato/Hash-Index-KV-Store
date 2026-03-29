@@ -100,6 +100,7 @@ The server uses a **binary length-prefixed protocol** (not plain text). Each req
 | `PING` | 8 | Returns `PONG`. Useful as a health check |
 | `MGET <key1> <key2> ...` | 9 | Fetches multiple keys in one round trip. Response is a flat list of `key, value` pairs; missing keys return a null byte (`\0`) as the value |
 | `MSET <k1> <v1> <k2> <v2> ...` | 10 | Writes multiple key-value pairs in one round trip |
+| `RANGE <start> <end>` | 11 | **LSM only.** Returns all live key-value pairs whose keys fall in the inclusive range `[start, end]`, in sorted order. Response is a flat list of `key, value` pairs. Returns an error on the KV engine (hash index has no ordering). Returns empty if `start > end` |
 
 ### STATS fields
 
