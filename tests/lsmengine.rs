@@ -1,4 +1,4 @@
-use rustikv::engine::StorageEngine;
+use rustikv::engine::{RangeScan, StorageEngine};
 use rustikv::lsmengine::LsmEngine;
 use std::{env, fs, time::SystemTime};
 
@@ -415,4 +415,185 @@ fn list_keys_tombstone_in_memtable_hides_flushed_key() {
     engine.delete("a").unwrap();
 
     assert_eq!(engine.list_keys().unwrap(), Vec::<String>::new());
+}
+
+// --- RangeScan tests ---
+
+#[test]
+fn range_basic_memtable() {
+    let dir = temp_dir("range_basic");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+    engine.set("c", "3").unwrap();
+    engine.set("d", "4").unwrap();
+
+    let results = engine.range("b", "c").unwrap();
+    assert_eq!(
+        results,
+        vec![
+            ("b".to_string(), "2".to_string()),
+            ("c".to_string(), "3".to_string())
+        ]
+    );
+}
+
+#[test]
+fn range_inclusive_bounds() {
+    let dir = temp_dir("range_inclusive");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("z", "26").unwrap();
+
+    // Both endpoints must be included
+    let results = engine.range("a", "z").unwrap();
+    assert_eq!(
+        results,
+        vec![
+            ("a".to_string(), "1".to_string()),
+            ("z".to_string(), "26".to_string())
+        ]
+    );
+}
+
+#[test]
+fn range_empty_when_no_keys_in_range() {
+    let dir = temp_dir("range_empty");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("z", "26").unwrap();
+
+    let results = engine.range("m", "p").unwrap();
+    assert!(results.is_empty());
+}
+
+#[test]
+fn range_returns_sorted_order() {
+    let dir = temp_dir("range_sorted");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    // Insert in reverse order
+    engine.set("c", "3").unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+
+    let results = engine.range("a", "c").unwrap();
+    let keys: Vec<&str> = results.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn range_tombstone_suppression() {
+    let dir = temp_dir("range_tombstone");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+    engine.set("c", "3").unwrap();
+    engine.delete("b").unwrap();
+
+    let results = engine.range("a", "c").unwrap();
+    assert_eq!(
+        results,
+        vec![
+            ("a".to_string(), "1".to_string()),
+            ("c".to_string(), "3".to_string())
+        ]
+    );
+}
+
+#[test]
+fn range_spans_memtable_and_segment() {
+    let dir = temp_dir("range_span");
+    // threshold=1 flushes every write to SSTable
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    engine.set("a", "1").unwrap(); // flushed to segment
+    engine.set("c", "3").unwrap(); // flushed to segment
+
+    // Reload with big threshold so new writes stay in memtable
+    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("b", "2").unwrap(); // stays in memtable
+
+    let results = engine.range("a", "c").unwrap();
+    assert_eq!(
+        results,
+        vec![
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "2".to_string()),
+            ("c".to_string(), "3".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn range_memtable_wins_over_segment() {
+    // Key written and flushed, then overwritten in memtable — range must return the newer value.
+    let dir = temp_dir("range_memtable_wins");
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    engine.set("a", "old").unwrap(); // flushed to segment
+
+    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "new").unwrap(); // in memtable
+
+    let results = engine.range("a", "a").unwrap();
+    assert_eq!(results, vec![("a".to_string(), "new".to_string())]);
+}
+
+#[test]
+fn range_tombstone_in_memtable_hides_flushed_key() {
+    let dir = temp_dir("range_tombstone_flushed");
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    engine.set("a", "1").unwrap(); // flushed to segment
+    engine.set("b", "2").unwrap(); // flushed to segment
+
+    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.delete("a").unwrap(); // tombstone in memtable
+
+    let results = engine.range("a", "b").unwrap();
+    assert_eq!(results, vec![("b".to_string(), "2".to_string())]);
+}
+
+#[test]
+fn range_inverted_bounds_returns_empty() {
+    // start > end is a malformed request — should return empty, not panic
+    let dir = temp_dir("range_inverted");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+
+    let results = engine.range("z", "a").unwrap();
+    assert!(results.is_empty());
+}
+
+#[test]
+fn range_single_key() {
+    // start == end should return exactly that key if it exists
+    let dir = temp_dir("range_single");
+    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+    engine.set("c", "3").unwrap();
+
+    let results = engine.range("b", "b").unwrap();
+    assert_eq!(results, vec![("b".to_string(), "2".to_string())]);
+}
+
+#[test]
+fn range_after_compaction() {
+    // Compaction rewrites segments — range must still return correct results afterwards
+    let dir = temp_dir("range_compact");
+    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    engine.set("a", "1").unwrap();
+    engine.set("b", "2").unwrap();
+    engine.set("c", "3").unwrap();
+    engine.set("d", "4").unwrap();
+
+    engine.compact().unwrap();
+
+    let results = engine.range("b", "c").unwrap();
+    assert_eq!(
+        results,
+        vec![
+            ("b".to_string(), "2".to_string()),
+            ("c".to_string(), "3".to_string())
+        ]
+    );
 }

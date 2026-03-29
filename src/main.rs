@@ -1,5 +1,5 @@
 use rustikv::bffp::{Command, ResponseStatus, decode_input_frame, encode_frame};
-use rustikv::engine::StorageEngine;
+use rustikv::engine::{RangeScan, StorageEngine};
 use rustikv::kvengine::KVEngine;
 use rustikv::lsmengine::LsmEngine;
 use rustikv::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
@@ -318,6 +318,32 @@ fn handle_stream_inner(
                         encode_frame(ResponseStatus::Ok, &[])
                     }
                     Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+                }
+            }
+            Command::Range(start, end) => {
+                log_verbose(format!(
+                    "Parsed RANGE command: start='{}' end={}",
+                    start, end
+                ));
+                let db = database.read().unwrap();
+                match db.as_any().downcast_ref::<LsmEngine>() {
+                    Some(lsm) => match lsm.range(&start, &end) {
+                        Ok(results) => {
+                            let results_count = results.len();
+                            let res: Vec<String> =
+                                results.into_iter().flat_map(|(k, v)| [k, v]).collect();
+                            stats
+                                .reads
+                                .fetch_add(results_count as u64, Ordering::Relaxed);
+
+                            encode_frame(ResponseStatus::Ok, &res)
+                        }
+                        Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+                    },
+                    None => encode_frame(
+                        ResponseStatus::Error,
+                        &["RANGE not supported by KV engine".to_string()],
+                    ),
                 }
             }
         };

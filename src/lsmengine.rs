@@ -1,7 +1,13 @@
-use std::{collections::HashSet, fs, io, path::PathBuf};
+use std::ops::Bound::Included;
+use std::{
+    any::Any,
+    collections::{BTreeMap, HashSet},
+    fs, io,
+    path::PathBuf,
+};
 
 use crate::{
-    engine::StorageEngine,
+    engine::{RangeScan, StorageEngine},
     memtable::Memtable,
     sstable::{SSTable, get_sstables},
     wal::Wal,
@@ -197,5 +203,57 @@ impl StorageEngine for LsmEngine {
         }
 
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl RangeScan for LsmEngine {
+    fn range(&self, start: &str, end: &str) -> io::Result<Vec<(String, String)>> {
+        if start > end {
+            return Ok(vec![]);
+        }
+        let mut b_map: BTreeMap<String, String> = BTreeMap::new();
+        for segment in self.segments.iter() {
+            let Some(seg_min) = segment.get_min() else {
+                continue;
+            };
+            let Some(seg_max) = segment.get_max() else {
+                continue;
+            };
+            let (min, _) = seg_min;
+            let (max, _) = seg_max;
+            // interval pruning: skip if segment range doesn't overlap [start, end]
+            if max.as_str() < start || min.as_str() > end {
+                continue;
+            }
+
+            for result in segment.iter()? {
+                let record = result?;
+                if record.key.as_str() < start || record.key.as_str() > end {
+                    continue;
+                }
+                if record.header.tombstone {
+                    b_map.remove(&record.key);
+                    continue;
+                }
+
+                b_map.insert(record.key, record.value);
+            }
+        }
+
+        for (k, v) in self
+            .memtable
+            .entries()
+            .range::<str, _>((Included(start), Included(end)))
+        {
+            match v {
+                Some(val) => b_map.insert(k.clone(), val.clone()),
+                None => b_map.remove(k),
+            };
+        }
+        Ok(b_map.into_iter().collect())
     }
 }

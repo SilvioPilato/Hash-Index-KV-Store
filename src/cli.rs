@@ -71,6 +71,13 @@ pub fn parse_command(line: &str) -> ParseResult {
                 ParseResult::Cmd(Command::Mset(pairs))
             }
         }
+        "RANGE" => {
+            if words.len() == 3 {
+                ParseResult::Cmd(Command::Range(words[1].to_string(), words[2].to_string()))
+            } else {
+                ParseResult::InvalidInput("Usage: RANGE <start> <end>".to_string())
+            }
+        }
         cmd => ParseResult::InvalidInput(format!("Unknown command: {cmd}")),
     }
 }

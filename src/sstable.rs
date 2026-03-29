@@ -21,6 +21,8 @@ pub struct SSTable {
     name: String,
     sparse_index: Vec<(String, u64)>,
     bloom: BloomFilter,
+    min: Option<(String, u64)>,
+    max: Option<(String, u64)>,
 }
 
 pub struct SSTableIter {
@@ -57,6 +59,8 @@ impl SSTable {
         let key_count = memtable.entries().len();
         let bloom_bytes = (key_count * BLOOM_BITS_PER_KEY).div_ceil(8);
         let mut bloom = BloomFilter::new(bloom_bytes.max(1), BLOOM_HASH_COUNT);
+        let mut last: Option<(String, u64)> = None;
+
         for (i, (key, opt)) in memtable.entries().iter().enumerate() {
             let (value, tombstone) = match opt {
                 Some(v) => (v.to_string(), false),
@@ -78,13 +82,18 @@ impl SSTable {
                 sparse_index.push((key.to_owned(), offset));
             }
             bloom.insert(key);
+            last = Some((key.clone(), offset));
         }
+        let min = sparse_index.first().cloned();
+        let max = last;
         Ok(SSTable {
             path,
             timestamp,
             name: name.to_string(),
             sparse_index,
             bloom,
+            min,
+            max,
         })
     }
 
@@ -127,6 +136,9 @@ impl SSTable {
         })
     }
 
+    /// Parses an SSTable filename into a stub `SSTable`.
+    /// **Caller must call `rebuild_index` before use** — `sparse_index`, `bloom`,
+    /// `min`, and `max` are all uninitialised placeholders until then.
     pub fn parse(filename: &str) -> Option<Self> {
         let stem = filename.strip_suffix(".sst")?;
         let (name, ts) = stem.rsplit_once('_')?;
@@ -140,6 +152,8 @@ impl SSTable {
             name: name.to_string(),
             sparse_index,
             bloom,
+            min: None,
+            max: None,
         })
     }
 
@@ -166,9 +180,18 @@ impl SSTable {
         }
         let bloom_bytes = (keys.len() * BLOOM_BITS_PER_KEY).div_ceil(8);
         let mut bloom = BloomFilter::new(bloom_bytes.max(1), BLOOM_HASH_COUNT);
+        let mut last_key: Option<&String> = None;
         for key in &keys {
             bloom.insert(key);
+            last_key = Some(key);
         }
+
+        self.min = sparse_index.first().cloned();
+        self.max = last_key.map(|k| {
+            let pos = sparse_index.partition_point(|(sk, _)| sk.as_str() <= k.as_str());
+            let offset = if pos > 0 { sparse_index[pos - 1].1 } else { 0 };
+            (k.clone(), offset)
+        });
         self.sparse_index = sparse_index;
         self.bloom = bloom;
         Ok(())
@@ -183,6 +206,14 @@ impl SSTable {
         } else {
             0 // start of file
         }
+    }
+
+    pub fn get_min(&self) -> &Option<(String, u64)> {
+        &self.min
+    }
+
+    pub fn get_max(&self) -> &Option<(String, u64)> {
+        &self.max
     }
 }
 
