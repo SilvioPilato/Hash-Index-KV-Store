@@ -88,7 +88,7 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Add a `RANGE <start> <end>` TCP command that returns all key-value pairs whose keys fall in the inclusive range `[start, end]`. Implement it only on the LSM engine — the KV (Bitcask) engine returns an error, making the hash-index limitation tangible. The LSM implementation merges results from the memtable (`BTreeMap::range`) and all SSTable iterators, applying tombstone suppression and returning the newest value per key in sorted order. Add `fn range(&self, start: &str, end: &str) -> Result<Vec<(String, String)>, io::Error>` to the `StorageEngine` trait. Depends on #30 (binary protocol) for clean multi-value response framing.
 
-PR: placeholder
+PR: <https://github.com/SilvioPilato/rustikv/pull/31>
 
 ## #53 — `MGET` command
 
