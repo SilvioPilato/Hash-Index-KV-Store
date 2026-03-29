@@ -9,6 +9,10 @@ name = "rustikli"
 path = "src/bin/rustikli.rs"
 
 [[bin]]
+name = "kvbench"
+path = "src/bin/kvbench.rs"
+
+[[bin]]
 name = "rustikv"
 path = "src/main.rs"
 
