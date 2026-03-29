@@ -108,3 +108,60 @@
 | **Misses don't hurt LSM reads** | p99 unchanged (75µs hit vs 75µs miss) — Bloom filter eliminates disk access on NOT_FOUND |
 | **Misses slightly help KV reads** | Mean drops from 65µs to 54µs — hash index returns nothing immediately, no segment I/O |
 | **LSM max latency is tightly bounded** | Sequential max 273µs vs KV 5.3ms — no segment file seeking, memtable fits in cache |
+
+---
+
+## Payload scaling — sequential, fsync=never/always
+
+Key counts scaled down for larger payloads to keep runtime reasonable (10KB: 2,000 keys; 100KB: 1,000; 1MB: 500).
+
+### WRITE throughput (ops/sec)
+
+| Value size | KV / fsync=never | LSM / fsync=never | KV / fsync=always |
+| --- | --- | --- | --- |
+| 100 B | 28,816 | 31,223 | 470 |
+| 1 KB | 24,052 | 23,798 | 466 |
+| 10 KB | 8,206 | 8,118 | 459 |
+| 100 KB | 928 | 722 | 101 |
+| 1 MB | 95 | 53 | 76 |
+
+### WRITE latency
+
+| Value size | KV / never mean | KV / never p99 | LSM / never mean | LSM / never p99 | KV / always mean | KV / always p99 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 100 B | 34.6µs | 92.0µs | 32.0µs | 92.2µs | 2,129µs | 2,610µs |
+| 1 KB | 41.5µs | 120.0µs | 42.0µs | 120.3µs | 2,148µs | 2,711µs |
+| 10 KB | 121.8µs | 257.3µs | 123.1µs | 220.6µs | 2,178µs | 2,860µs |
+| 100 KB | 1,077µs | 1,304µs | 1,386µs | 1,213µs | 9,922µs | 23,216µs |
+| 1 MB | 10,523µs | 30,805µs | 19,001µs | 425,492µs | 13,097µs | 35,163µs |
+
+### READ throughput (ops/sec)
+
+| Value size | KV / fsync=never | LSM / fsync=never | KV / fsync=always |
+| --- | --- | --- | --- |
+| 100 B | 16,954 | 40,199 | 17,186 |
+| 1 KB | 15,022 | 38,926 | 14,678 |
+| 10 KB | 6,769 | 32,999 | 6,846 |
+| 100 KB | 986 | 80 | 983 |
+| 1 MB | 99 | 5 | 98 |
+
+### READ latency
+
+| Value size | KV / never mean | KV / never p99 | LSM / never mean | LSM / never p99 | KV / always mean | KV / always p99 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 100 B | 58.9µs | 169.4µs | 24.8µs | 68.4µs | 58.1µs | 154.6µs |
+| 1 KB | 66.5µs | 167.5µs | 25.6µs | 79.8µs | 68.1µs | 174.1µs |
+| 10 KB | 147.7µs | 260.5µs | 30.3µs | 64.4µs | 146.0µs | 263.3µs |
+| 100 KB | 1,014µs | 1,211µs | 12,455µs | 46,944µs | 1,017µs | 1,435µs |
+| 1 MB | 10,086µs | 31,626µs | 213,953µs | 413,152µs | 10,176µs | 31,301µs |
+
+### Key findings
+
+| Finding | Evidence |
+| --- | --- |
+| **Writes converge as payload grows** | At 10KB both engines hit ~8K ops/sec — bottleneck shifts from index/protocol overhead to raw I/O, which is equal for both |
+| **LSM reads collapse beyond 100KB** | 100KB: 80 ops/sec LSM vs 986 KV; 1MB: 5 vs 99 — large values fill segments fast, triggering frequent compaction flushes and merge-sorts mid-benchmark |
+| **KV reads scale linearly with payload** | 59µs at 100B → 10ms at 1MB, proportional to bytes transferred over TCP; hash index seek cost is negligible |
+| **LSM read p99 explodes at 1MB** | 413ms p99 vs 32ms for KV — compaction stalls cause extreme tail latency at large value sizes |
+| **fsync=always write penalty shrinks with large payloads** | At 1MB: 95 (never) vs 76 (always) ops/sec — flush cost becomes negligible relative to time spent writing 1MB |
+| **LSM advantage on reads vanishes above 10KB** | 10KB: LSM 33K vs KV 6.8K ops/sec; 100KB: LSM 80 vs KV 986 — the crossover point where compaction pressure overtakes the memtable read advantage |
