@@ -82,6 +82,59 @@ rustikli> COMPACT
 rustikli> QUIT
 ```
 
+## Benchmark tool (kvbench)
+
+`kvbench` connects to the server, runs write and read phases, and reports throughput and latency stats.
+
+```sh
+cargo run --bin kvbench -- [OPTIONS]
+```
+
+| Flag | Description | Default |
+| ---- | ----------- | ------- |
+| `-h`, `--host` | Server TCP address | `127.0.0.1:6666` |
+| `-n`, `--count` | Number of keys | `10000` |
+| `-s`, `--value-size` | Value size in bytes | `100` |
+| `-m`, `--miss-ratio` | Fraction of reads targeting non-existent keys (0.0–1.0) | `0.0` |
+| `--mode` | `sequential` or `concurrent` | `sequential` |
+| `--writers` | Writer threads (concurrent mode only) | `4` |
+| `--readers` | Reader threads (concurrent mode only) | `4` |
+
+### Sequential mode
+
+Writes N keys then reads them back on a single connection. Use `--miss-ratio` to mix in non-existent keys and observe NOT_FOUND rate and its impact on read latency (especially visible on LSM, where Bloom filters short-circuit the lookup).
+
+```sh
+cargo run --bin kvbench -- -n 10000 -s 100
+cargo run --bin kvbench -- -n 10000 --miss-ratio 0.3
+```
+
+### Concurrent mode
+
+Spawns writer and reader threads simultaneously, each on its own TCP connection. All threads start at a barrier so load is applied at the same instant. Reports write and read stats separately, plus an aggregate throughput over the shared wall time.
+
+```sh
+cargo run --bin kvbench -- -n 10000 --mode concurrent --writers 4 --readers 4
+```
+
+Reads in concurrent mode may hit keys not yet written — those count as misses and reflect real contention behaviour under mixed load.
+
+### Comparing engines
+
+The most instructive comparison is KV vs LSM with `--fsync-interval never` to isolate engine behaviour from I/O cost:
+
+```sh
+# Terminal 1 — KV engine
+cargo run -- C:/Temp/db-kv --engine kv --fsync-interval never
+# Terminal 1 — LSM engine
+cargo run -- C:/Temp/db-lsm --engine lsm --fsync-interval never
+
+# Terminal 2 — benchmark
+cargo run --bin kvbench -- -n 10000 -s 100
+```
+
+Expected pattern: writes are roughly equal (both append-only); KV reads are ~2× faster (O(1) hash index vs SSTable merge scan — read amplification from DDIA Ch. 3).
+
 ## Commands
 
 The server uses a **binary length-prefixed protocol** (not plain text). Each request is a frame: a 4-byte big-endian payload length, followed by a 1-byte op code, followed by op-specific fields. Responses use the same framing with a 1-byte status byte.
