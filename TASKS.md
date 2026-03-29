@@ -84,7 +84,7 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Add a `cargo run --bin kvbench` binary that writes N random keys, reads them back, and prints throughput and latency stats. The key value: run it against `--engine kv` then `--engine lsm` to compare and make the write-amplification and read-amplification tradeoffs from DDIA Ch. 3 tangible.
 
-PR: placeholder
+PR: <https://github.com/SilvioPilato/rustikv/pull/32>
 
 ## #48 — `RANGE` command (LSM only)
 
