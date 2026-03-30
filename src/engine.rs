@@ -14,6 +14,9 @@ pub trait StorageEngine: Send + Sync {
     fn mget(&self, keys: Vec<String>) -> Result<Vec<(String, Option<String>)>, std::io::Error>;
     fn mset(&mut self, keys: Vec<(String, String)>) -> Result<(), std::io::Error>;
     fn as_any(&self) -> &dyn Any;
+    fn compact_step(&mut self) -> io::Result<bool> {
+        Ok(false)
+    }
 }
 
 pub trait RangeScan {

@@ -158,7 +158,7 @@ impl SSTable {
     }
 
     /// Rebuild the sparse index and Bloom filter by scanning all records.
-    fn rebuild_index(&mut self) -> io::Result<()> {
+    pub fn rebuild_index(&mut self) -> io::Result<()> {
         let file = OpenOptions::new().read(true).open(&self.path)?;
         let mut reader = BufReader::new(file);
         let mut sparse_index: Vec<(String, u64)> = Vec::new();
