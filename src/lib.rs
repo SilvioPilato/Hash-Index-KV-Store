@@ -1,6 +1,7 @@
 pub mod bffp;
 pub mod bloom;
 pub mod cli;
+pub mod compaction;
 pub mod crc;
 pub mod engine;
 pub mod hash_index;
