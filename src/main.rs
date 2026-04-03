@@ -4,6 +4,7 @@ use rustikv::kvengine::KVEngine;
 use rustikv::lsmengine::LsmEngine;
 use rustikv::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
 use rustikv::settings::{EngineType, Settings};
+use rustikv::size_tiered::SizeTiered;
 use rustikv::stats::Stats;
 use std::env;
 use std::io::{self};
@@ -43,11 +44,20 @@ fn main() -> io::Result<()> {
                 settings.sync_strategy,
             )?),
         },
-        EngineType::Lsm => Box::new(LsmEngine::from_dir(
-            &settings.db_file_path,
-            &settings.db_name,
-            settings.max_segment_bytes as usize,
-        )?),
+        EngineType::Lsm => {
+            let strategy = Box::new(SizeTiered::load_from_dir(
+                &settings.db_file_path,
+                &settings.db_name,
+                4,  // min_threshold
+                32, // max_threshold
+            )?);
+            Box::new(LsmEngine::from_dir(
+                &settings.db_file_path,
+                &settings.db_name,
+                settings.max_segment_bytes as usize,
+                strategy,
+            )?)
+        }
     };
 
     let db_handle: Arc<RwLock<Box<dyn StorageEngine>>> = Arc::new(RwLock::new(database));

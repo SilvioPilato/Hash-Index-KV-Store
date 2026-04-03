@@ -10,7 +10,7 @@
 
 Replace the current flat `compact()` implementation in `LsmEngine` (which merges all segments into a single SSTable) with a pluggable compaction strategy system. Two strategies are supported: **size-tiered** (default, improves on current behavior) and **leveled** (LevelDB-style, with level-based no-overlap guarantees).
 
-The strategy is selected at startup via a CLI flag and encapsulated behind a `CompactionStrategy` trait, keeping `LsmEngine` clean and strategy-agnostic.
+The strategy is selected at startup via a CLI flag and encapsulated behind a `StorageStrategy` trait, keeping `LsmEngine` clean and strategy-agnostic.
 
 ---
 
@@ -18,7 +18,7 @@ The strategy is selected at startup via a CLI flag and encapsulated behind a `Co
 
 ### `LsmEngine` changes
 
-Replace `segments: Vec<SSTable>` with `strategy: Box<dyn CompactionStrategy>`.
+Replace `segments: Vec<SSTable>` with `strategy: Box<dyn StorageStrategy>`.
 
 ```
 LsmEngine {
@@ -27,7 +27,7 @@ LsmEngine {
     db_path: String,
     db_name: String,
     max_memtable_bytes: usize,
-    strategy: Box<dyn CompactionStrategy>,   // ← new
+    strategy: Box<dyn StorageStrategy>,   // ← new
 }
 ```
 
@@ -37,10 +37,10 @@ LsmEngine {
 - `range()` → uses `strategy.iter_files_for_range(start, end)` (see RangeScan section).
 - `from_dir()` → uses a `load_strategy(dir, name, strategy_type, config)` factory that reads existing files and builds the correct strategy.
 
-### `CompactionStrategy` trait (`src/compaction.rs`)
+### `StorageStrategy` trait (`src/compaction.rs`)
 
 ```rust
-pub trait CompactionStrategy: Send + Sync {
+pub trait StorageStrategy: Send + Sync {
     /// Called after every memtable flush.
     fn add_sstable(&mut self, sst: SSTable);
 
@@ -119,10 +119,12 @@ pub struct SizeTieredConfig {
 
 ### Bucketing logic
 
-1. Sort files by size.
-2. Build buckets greedily: start a new bucket with the first file. For each subsequent file, if `bucket_avg * bucket_low <= file_size <= bucket_avg * bucket_high` (where `bucket_avg` is recomputed after each addition), add it to the current bucket; otherwise start a new bucket.
-3. If a bucket has `>= min_threshold` files → merge all files in that bucket → single new SSTable.
-4. Repeat until no bucket is ready.
+1. When a new SSTable arrives (via `add_sstable`), search existing buckets for a size match.
+2. A file matches a bucket if: `bucket_avg * bucket_low <= file_size <= bucket_avg * bucket_high` (where `bucket_avg` is the average size of files already in the bucket).
+3. If multiple buckets match, choose the one with the smallest size difference (`|bucket_avg - file_size|`) — best-fit strategy.
+4. If no bucket matches, create a new bucket with just this file.
+5. If a bucket reaches `>= min_threshold` files → trigger compaction of that bucket → merge all files into a single new SSTable.
+6. Compaction runs in `compact_if_needed` at most once per call.
 
 **Output file size:** Size-tiered compaction produces a single SSTable per bucket merge, regardless of output size. For large buckets this can produce large files — this is a known trade-off of the strategy and acceptable for this educational implementation.
 
@@ -279,7 +281,7 @@ Runs compaction steps in a loop until no level needs compaction (i.e., `compact_
 
 | File | Purpose |
 |------|---------|
-| `src/compaction.rs` | `CompactionStrategy` trait |
+| `src/compaction.rs` | `StorageStrategy` trait |
 | `src/leveled.rs` | `LeveledCompaction`, `Level`, `LeveledConfig` |
 | `src/size_tiered.rs` | `SizeTieredCompaction`, `SizeTieredConfig` |
 | `tests/leveled_compaction.rs` | Tests for leveled strategy |
@@ -289,7 +291,7 @@ Runs compaction steps in a loop until no level needs compaction (i.e., `compact_
 
 | File | Change |
 |------|--------|
-| `src/lsmengine.rs` | Replace `segments: Vec<SSTable>` with `strategy: Box<dyn CompactionStrategy>`; add `compact_step()` |
+| `src/lsmengine.rs` | Replace `segments: Vec<SSTable>` with `strategy: Box<dyn StorageStrategy>`; add `compact_step()` |
 | `src/sstable.rs` | Add `SSTable::parse_leveled(filename)` for leveled filename format; change `rebuild_index` to `pub(crate)` |
 | `src/engine.rs` | Add `compact_step(&mut self) -> io::Result<bool>` with default no-op |
 | `src/settings.rs` | Add compaction strategy CLI flags |

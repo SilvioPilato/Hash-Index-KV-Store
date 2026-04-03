@@ -20,7 +20,7 @@ pub struct SSTable {
     pub timestamp: u64, // for ordering segments newest-to-oldest
     name: String,
     sparse_index: Vec<(String, u64)>,
-    bloom: BloomFilter,
+    pub bloom: BloomFilter,
     min: Option<(String, u64)>,
     max: Option<(String, u64)>,
 }
@@ -214,6 +214,10 @@ impl SSTable {
 
     pub fn get_max(&self) -> &Option<(String, u64)> {
         &self.max
+    }
+
+    pub fn size_on_disk(&self) -> io::Result<u64> {
+        Ok(std::fs::metadata(&self.path)?.len())
     }
 }
 

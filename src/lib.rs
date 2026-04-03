@@ -1,7 +1,6 @@
 pub mod bffp;
 pub mod bloom;
 pub mod cli;
-pub mod compaction;
 pub mod crc;
 pub mod engine;
 pub mod hash_index;
@@ -12,7 +11,9 @@ pub mod memtable;
 pub mod record;
 pub mod segment;
 pub mod settings;
+pub mod size_tiered;
 pub mod sstable;
 pub mod stats;
+pub mod storage_strategy;
 pub mod wal;
 pub mod worker;
