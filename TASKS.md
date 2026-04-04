@@ -80,7 +80,7 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Implemented LevelDB-style leveled compaction as a `StorageStrategy`. Added `Level` struct with self-contained compaction triggers (L0: file count threshold, L1+: byte budget with 10x scaling per level). Cross-level merge via `compact_levels` merges source files with overlapping target files in one pass. Tombstones preserved on non-terminal levels, dropped on terminal. Leveled SSTable filenames encode the level (`{name}_L{n}_{timestamp}.sst`) for correct placement on restart. Wired into `main.rs` via `--storage-strategy leveled` with three new CLI flags (`-lnl`, `-ll0`, `-ll1`). 34 new tests in `tests/leveled.rs`.
 
-PR: TBD
+PR: <https://github.com/SilvioPilato/rustikv/pull/33>
 
 ## #42 — Load generator / benchmark tool (`kvbench`)
 
