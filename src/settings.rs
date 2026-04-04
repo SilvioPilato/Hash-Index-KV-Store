@@ -12,6 +12,11 @@ pub enum FSyncStrategy {
     Never,
 }
 
+pub enum StorageStrategy {
+    SizeTiered,
+    Leveled,
+}
+
 #[derive(Copy, Clone)]
 pub enum EngineType {
     KV,
@@ -27,6 +32,10 @@ pub struct Settings {
     pub engine: EngineType,
     pub compaction_ratio: f32,
     pub compaction_max_segment: usize,
+    pub storage_strategy: StorageStrategy,
+    pub leveled_num_levels: usize,
+    pub leveled_l0_threshold: usize,
+    pub leveled_l1_max_bytes: u64,
 }
 
 impl Settings {
@@ -49,6 +58,10 @@ impl Settings {
             engine: EngineType::KV,
             compaction_ratio: 0.0,
             compaction_max_segment: 0,
+            storage_strategy: StorageStrategy::SizeTiered,
+            leveled_num_levels: 4,
+            leveled_l0_threshold: 4,
+            leveled_l1_max_bytes: 10 * 1024 * 1024,
         };
         while let Some(arg) = args_iter.next() {
             match arg.as_str() {
@@ -93,6 +106,32 @@ impl Settings {
                             .expect("Invalid compaction max segments provided");
                     }
                 }
+                "-ss" | "--storage-strategy" => {
+                    if let Some(value) = args_iter.next() {
+                        settings.storage_strategy =
+                            Settings::parse_storage_strategy(value).unwrap();
+                    }
+                }
+                "-lnl" | "--leveled-num-levels" => {
+                    if let Some(value) = args_iter.next() {
+                        settings.leveled_num_levels =
+                            value.parse().expect("Invalid leveled num levels provided");
+                    }
+                }
+                "-ll0" | "--leveled-l0-threshold" => {
+                    if let Some(value) = args_iter.next() {
+                        settings.leveled_l0_threshold = value
+                            .parse()
+                            .expect("Invalid leveled L0 threshold provided");
+                    }
+                }
+                "-ll1" | "--leveled-l1-max-bytes" => {
+                    if let Some(value) = args_iter.next() {
+                        settings.leveled_l1_max_bytes = value
+                            .parse()
+                            .expect("Invalid leveled L1 max bytes provided");
+                    }
+                }
                 _ => println!("Unknown argument: {}", arg),
             }
         }
@@ -121,6 +160,16 @@ impl Settings {
         println!(
             "                         Auto-compact when dead/total bytes exceeds ratio (default: 0.0 = disabled)"
         );
+        println!("  -ss, --storage-strategy <STRATEGY>");
+        println!(
+            "                         Storage strategy: 'size-tiered' or 'leveled' (default: size-tiered)"
+        );
+        println!("  -lnl, --leveled-num-levels <N>");
+        println!("                         Number of levels for leveled compaction (default: 4)");
+        println!("  -ll0, --leveled-l0-threshold <N>");
+        println!("                         L0 file count before compaction (default: 4)");
+        println!("  -ll1, --leveled-l1-max-bytes <BYTES>");
+        println!("                         L1 max size in bytes (default: 10485760)");
         println!("  -h, --help             Print this help message");
     }
     fn parse_fsync(s: &str) -> Result<FSyncStrategy, String> {
@@ -158,6 +207,14 @@ impl Settings {
             "kv" => Ok(EngineType::KV),
             "lsm" => Ok(EngineType::Lsm),
             _ => Err(format!("Unsupported engine provided: {s}")),
+        }
+    }
+
+    fn parse_storage_strategy(s: &str) -> Result<StorageStrategy, String> {
+        match s {
+            "leveled" => Ok(StorageStrategy::Leveled),
+            "size-tiered" => Ok(StorageStrategy::SizeTiered),
+            _ => Err(format!("Unsupported storage strategy provided: {s}")),
         }
     }
 }

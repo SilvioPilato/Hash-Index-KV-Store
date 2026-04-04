@@ -1,9 +1,11 @@
 use rustikv::bffp::{Command, ResponseStatus, decode_input_frame, encode_frame};
 use rustikv::engine::{RangeScan, StorageEngine};
 use rustikv::kvengine::KVEngine;
+use rustikv::leveled::Leveled;
 use rustikv::lsmengine::LsmEngine;
 use rustikv::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
-use rustikv::settings::{EngineType, Settings};
+use rustikv::settings::{EngineType, Settings, StorageStrategy};
+use rustikv::size_tiered::SizeTiered;
 use rustikv::stats::Stats;
 use std::env;
 use std::io::{self};
@@ -43,11 +45,33 @@ fn main() -> io::Result<()> {
                 settings.sync_strategy,
             )?),
         },
-        EngineType::Lsm => Box::new(LsmEngine::from_dir(
-            &settings.db_file_path,
-            &settings.db_name,
-            settings.max_segment_bytes as usize,
-        )?),
+        EngineType::Lsm => {
+            let strategy: Box<dyn rustikv::storage_strategy::StorageStrategy> =
+                match settings.storage_strategy {
+                    StorageStrategy::SizeTiered => {
+                        Box::new(SizeTiered::load_from_dir(
+                            &settings.db_file_path,
+                            &settings.db_name,
+                            4,  // min_threshold
+                            32, // max_threshold
+                        )?)
+                    }
+                    StorageStrategy::Leveled => Box::new(Leveled::load_from_dir(
+                        &settings.db_file_path,
+                        &settings.db_name,
+                        settings.leveled_num_levels,
+                        settings.leveled_l0_threshold,
+                        settings.leveled_l1_max_bytes,
+                    )?),
+                };
+
+            Box::new(LsmEngine::from_dir(
+                &settings.db_file_path,
+                &settings.db_name,
+                settings.max_segment_bytes as usize,
+                strategy,
+            )?)
+        }
     };
 
     let db_handle: Arc<RwLock<Box<dyn StorageEngine>>> = Arc::new(RwLock::new(database));

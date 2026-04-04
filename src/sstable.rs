@@ -19,8 +19,9 @@ pub struct SSTable {
     pub path: PathBuf,
     pub timestamp: u64, // for ordering segments newest-to-oldest
     name: String,
+    pub level: Option<usize>,
     sparse_index: Vec<(String, u64)>,
-    bloom: BloomFilter,
+    pub bloom: BloomFilter,
     min: Option<(String, u64)>,
     max: Option<(String, u64)>,
 }
@@ -43,12 +44,20 @@ impl Iterator for SSTableIter {
 
 impl SSTable {
     /// Flush a memtable to disk as a sorted segment file
-    pub fn from_memtable(dir: &str, name: &str, memtable: &Memtable) -> io::Result<SSTable> {
+    pub fn from_memtable(
+        dir: &str,
+        name: &str,
+        memtable: &Memtable,
+        level: Option<usize>,
+    ) -> io::Result<SSTable> {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| io::Error::other("SystemTime error"))?
             .as_nanos() as u64;
-        let filename = format!("{}_{}.sst", name, timestamp);
+        let filename = match level {
+            Some(l) => format!("{}_L{}_{}.sst", name, l, timestamp),
+            None => format!("{}_{}.sst", name, timestamp),
+        };
         let path = PathBuf::from(dir).join(filename);
 
         let mut file = OpenOptions::new()
@@ -90,6 +99,7 @@ impl SSTable {
             path,
             timestamp,
             name: name.to_string(),
+            level,
             sparse_index,
             bloom,
             min,
@@ -141,15 +151,25 @@ impl SSTable {
     /// `min`, and `max` are all uninitialised placeholders until then.
     pub fn parse(filename: &str) -> Option<Self> {
         let stem = filename.strip_suffix(".sst")?;
-        let (name, ts) = stem.rsplit_once('_')?;
-        let timestamp = ts.parse().ok()?;
+        let (name_and_maybe_level, ts) = stem.rsplit_once('_')?;
+        let timestamp: u64 = ts.parse().ok()?;
+        // Try to extract level: {name}_L{level}_{timestamp}.sst
+        let (name, level) = if let Some((n, l)) = name_and_maybe_level.rsplit_once("_L") {
+            match l.parse::<usize>() {
+                Ok(lvl) => (n.to_string(), Some(lvl)),
+                Err(_) => (name_and_maybe_level.to_string(), None),
+            }
+        } else {
+            (name_and_maybe_level.to_string(), None)
+        };
         let path = PathBuf::new();
         let sparse_index: Vec<(String, u64)> = Vec::new();
         let bloom = BloomFilter::new(1, BLOOM_HASH_COUNT);
         Some(Self {
             path,
             timestamp,
-            name: name.to_string(),
+            name,
+            level,
             sparse_index,
             bloom,
             min: None,
@@ -158,7 +178,7 @@ impl SSTable {
     }
 
     /// Rebuild the sparse index and Bloom filter by scanning all records.
-    fn rebuild_index(&mut self) -> io::Result<()> {
+    pub fn rebuild_index(&mut self) -> io::Result<()> {
         let file = OpenOptions::new().read(true).open(&self.path)?;
         let mut reader = BufReader::new(file);
         let mut sparse_index: Vec<(String, u64)> = Vec::new();
@@ -214,6 +234,10 @@ impl SSTable {
 
     pub fn get_max(&self) -> &Option<(String, u64)> {
         &self.max
+    }
+
+    pub fn size_on_disk(&self) -> io::Result<u64> {
+        Ok(std::fs::metadata(&self.path)?.len())
     }
 }
 

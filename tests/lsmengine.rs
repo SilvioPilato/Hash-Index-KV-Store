@@ -1,5 +1,6 @@
 use rustikv::engine::{RangeScan, StorageEngine};
 use rustikv::lsmengine::LsmEngine;
+use rustikv::size_tiered::SizeTiered;
 use std::{env, fs, time::SystemTime};
 
 fn temp_dir(suffix: &str) -> String {
@@ -13,12 +14,26 @@ fn temp_dir(suffix: &str) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn new_engine(dir: &str, db_name: &str, max_memtable_bytes: usize) -> std::io::Result<LsmEngine> {
+    let strategy = Box::new(SizeTiered::new(4, 32)); // min_threshold=4, max_threshold=32
+    LsmEngine::new(dir, db_name, max_memtable_bytes, strategy)
+}
+
+fn engine_from_dir(
+    dir: &str,
+    db_name: &str,
+    max_memtable_bytes: usize,
+) -> std::io::Result<LsmEngine> {
+    let strategy = Box::new(SizeTiered::load_from_dir(dir, db_name, 4, 32)?);
+    LsmEngine::from_dir(dir, db_name, max_memtable_bytes, strategy)
+}
+
 const BIG_MEMTABLE: usize = 1_048_576; // 1 MB — won't auto-flush
 
 #[test]
 fn set_and_get() {
     let dir = temp_dir("set_get");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("hello", "world").unwrap();
     let result = engine.get("hello").unwrap();
     assert_eq!(result, Some(("hello".to_string(), "world".to_string())));
@@ -27,14 +42,14 @@ fn set_and_get() {
 #[test]
 fn get_missing_key() {
     let dir = temp_dir("missing");
-    let engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     assert_eq!(engine.get("nope").unwrap(), None);
 }
 
 #[test]
 fn set_overwrite() {
     let dir = temp_dir("overwrite");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "old").unwrap();
     engine.set("k", "new").unwrap();
     let (_, v) = engine.get("k").unwrap().unwrap();
@@ -44,7 +59,7 @@ fn set_overwrite() {
 #[test]
 fn delete_removes_key() {
     let dir = temp_dir("delete");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "v").unwrap();
     engine.delete("k").unwrap();
     assert_eq!(engine.get("k").unwrap(), None);
@@ -53,7 +68,7 @@ fn delete_removes_key() {
 #[test]
 fn delete_nonexistent_key() {
     let dir = temp_dir("delete_missing");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     let result = engine.delete("nope").unwrap();
     assert_eq!(result, None);
 }
@@ -62,7 +77,7 @@ fn delete_nonexistent_key() {
 fn memtable_flushes_to_sstable() {
     let dir = temp_dir("flush");
     // Tiny threshold so a single write triggers a flush
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
 
     // After flush, memtable is cleared but data is readable from SSTable
@@ -87,7 +102,7 @@ fn memtable_flushes_to_sstable() {
 #[test]
 fn reads_span_memtable_and_segments() {
     let dir = temp_dir("span");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     // This will flush to segment
     engine.set("k1", "v1").unwrap();
 
@@ -106,7 +121,7 @@ fn reads_span_memtable_and_segments() {
 #[test]
 fn delete_shadows_flushed_value() {
     let dir = temp_dir("shadow");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     // Flush k1 to a segment
     engine.set("k1", "v1").unwrap();
     // Delete in memtable should shadow the segment value
@@ -117,7 +132,7 @@ fn delete_shadows_flushed_value() {
 #[test]
 fn compact_preserves_values() {
     let dir = temp_dir("compact_preserve");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
 
@@ -132,7 +147,7 @@ fn compact_preserves_values() {
 #[test]
 fn compact_keeps_latest_value() {
     let dir = temp_dir("compact_latest");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k", "old").unwrap();
     engine.set("k", "new").unwrap();
 
@@ -145,7 +160,7 @@ fn compact_keeps_latest_value() {
 #[test]
 fn compact_drops_deleted_keys() {
     let dir = temp_dir("compact_delete");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.delete("k1").unwrap();
 
@@ -157,7 +172,7 @@ fn compact_drops_deleted_keys() {
 #[test]
 fn compact_is_idempotent() {
     let dir = temp_dir("compact_idempotent");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
 
@@ -174,12 +189,12 @@ fn compact_is_idempotent() {
 fn from_dir_reloads_segments() {
     let dir = temp_dir("from_dir");
     {
-        let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+        let mut engine = new_engine(&dir, "test", 1).unwrap();
         engine.set("k1", "v1").unwrap();
         engine.set("k2", "v2").unwrap();
     }
 
-    let engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     let (_, v1) = engine.get("k1").unwrap().unwrap();
     let (_, v2) = engine.get("k2").unwrap().unwrap();
     assert_eq!(v1, "v1");
@@ -189,7 +204,7 @@ fn from_dir_reloads_segments() {
 #[test]
 fn compact_reduces_segment_count() {
     let dir = temp_dir("compact_reduce");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
     engine.set("k3", "v3").unwrap();
@@ -233,14 +248,14 @@ fn wal_recovers_unflushed_writes() {
     // Dropping the engine simulates a crash; from_dir must replay the WAL.
     let dir = temp_dir("wal_recover");
     {
-        let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+        let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
         engine.set("k1", "v1").unwrap();
         engine.set("k2", "v2").unwrap();
         engine.set("k3", "v3").unwrap();
         // drop without flush
     }
 
-    let engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     assert_eq!(
         engine.get("k1").unwrap(),
         Some(("k1".to_string(), "v1".to_string()))
@@ -261,16 +276,16 @@ fn wal_recovers_unflushed_delete() {
     // shadowing the earlier value that was already flushed to an SSTable.
     let dir = temp_dir("wal_delete");
     {
-        let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1 flushes immediately
+        let mut engine = new_engine(&dir, "test", 1).unwrap(); // threshold=1 flushes immediately
         engine.set("k1", "v1").unwrap(); // flushed to SSTable
     }
     {
-        let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+        let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
         engine.delete("k1").unwrap(); // tombstone in WAL only, not flushed
         // drop without flush
     }
 
-    let engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     assert_eq!(engine.get("k1").unwrap(), None);
 }
 
@@ -280,7 +295,7 @@ fn wal_corrupt_tail_does_not_panic() {
     // from_dir must stop replay at the corrupt record and recover earlier entries.
     let dir = temp_dir("wal_corrupt");
     {
-        let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+        let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
         engine.set("k1", "v1").unwrap();
         engine.set("k2", "v2").unwrap();
     }
@@ -294,7 +309,7 @@ fn wal_corrupt_tail_does_not_panic() {
 
     // Must not panic; k1 may or may not be recovered depending on where truncation fell,
     // but from_dir must succeed
-    let engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     // k1 was written first — its record is intact and must be readable
     assert_eq!(
         engine.get("k1").unwrap(),
@@ -307,7 +322,7 @@ fn wal_is_absent_after_flush() {
     // Once the memtable is flushed to an SSTable, the WAL is no longer needed.
     // It must be deleted so that the next startup doesn't replay stale entries.
     let dir = temp_dir("wal_absent");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1, every write flushes
+    let mut engine = new_engine(&dir, "test", 1).unwrap(); // threshold=1, every write flushes
     engine.set("k1", "v1").unwrap();
 
     let wal_path = std::path::Path::new(&dir).join("test.wal");
@@ -321,7 +336,7 @@ fn wal_is_absent_after_flush() {
 #[test]
 fn exists_returns_true_after_set() {
     let dir = temp_dir("exists_true");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "v").unwrap();
     assert!(engine.exists("k"));
 }
@@ -329,14 +344,14 @@ fn exists_returns_true_after_set() {
 #[test]
 fn exists_returns_false_for_missing_key() {
     let dir = temp_dir("exists_missing");
-    let engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     assert!(!engine.exists("nope"));
 }
 
 #[test]
 fn exists_returns_false_after_delete() {
     let dir = temp_dir("exists_delete");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "v").unwrap();
     engine.delete("k").unwrap();
     assert!(!engine.exists("k"));
@@ -347,7 +362,7 @@ fn exists_returns_true_for_flushed_key() {
     // Key is flushed to an SSTable; exists must still find it via SSTable lookup
     // (and the bloom filter must not produce a false negative).
     let dir = temp_dir("exists_flushed");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1, every write flushes
+    let mut engine = new_engine(&dir, "test", 1).unwrap(); // threshold=1, every write flushes
     engine.set("k", "v").unwrap();
     assert!(engine.exists("k"));
 }
@@ -356,7 +371,7 @@ fn exists_returns_true_for_flushed_key() {
 fn exists_returns_false_for_tombstoned_flushed_key() {
     // Key written and flushed, then deleted (tombstone in memtable). exists must return false.
     let dir = temp_dir("exists_tombstone");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap(); // threshold=1, flushes on set
+    let mut engine = new_engine(&dir, "test", 1).unwrap(); // threshold=1, flushes on set
     engine.set("k", "v").unwrap();
     engine.delete("k").unwrap();
     assert!(!engine.exists("k"));
@@ -365,7 +380,7 @@ fn exists_returns_false_for_tombstoned_flushed_key() {
 #[test]
 fn list_keys_returns_all_live_keys() {
     let dir = temp_dir("list_keys");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -378,7 +393,7 @@ fn list_keys_returns_all_live_keys() {
 #[test]
 fn list_keys_excludes_deleted_keys() {
     let dir = temp_dir("list_keys_delete");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -393,11 +408,11 @@ fn list_keys_excludes_deleted_keys() {
 fn list_keys_spans_memtable_and_segments() {
     let dir = temp_dir("list_keys_segments");
     // Threshold of 1 byte so every write flushes to SSTable
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("x", "1").unwrap();
     engine.set("y", "2").unwrap();
     // Reload from disk and write one more key — it stays in the memtable
-    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("z", "3").unwrap();
 
     let mut keys = engine.list_keys().unwrap();
@@ -409,9 +424,9 @@ fn list_keys_spans_memtable_and_segments() {
 fn list_keys_tombstone_in_memtable_hides_flushed_key() {
     let dir = temp_dir("list_keys_tombstone");
     // Flush "a" to SSTable, then delete it via memtable tombstone
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap();
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.delete("a").unwrap();
 
     assert_eq!(engine.list_keys().unwrap(), Vec::<String>::new());
@@ -422,7 +437,7 @@ fn list_keys_tombstone_in_memtable_hides_flushed_key() {
 #[test]
 fn range_basic_memtable() {
     let dir = temp_dir("range_basic");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -441,7 +456,7 @@ fn range_basic_memtable() {
 #[test]
 fn range_inclusive_bounds() {
     let dir = temp_dir("range_inclusive");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("z", "26").unwrap();
 
@@ -459,7 +474,7 @@ fn range_inclusive_bounds() {
 #[test]
 fn range_empty_when_no_keys_in_range() {
     let dir = temp_dir("range_empty");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("z", "26").unwrap();
 
@@ -470,7 +485,7 @@ fn range_empty_when_no_keys_in_range() {
 #[test]
 fn range_returns_sorted_order() {
     let dir = temp_dir("range_sorted");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     // Insert in reverse order
     engine.set("c", "3").unwrap();
     engine.set("a", "1").unwrap();
@@ -484,7 +499,7 @@ fn range_returns_sorted_order() {
 #[test]
 fn range_tombstone_suppression() {
     let dir = temp_dir("range_tombstone");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -504,12 +519,12 @@ fn range_tombstone_suppression() {
 fn range_spans_memtable_and_segment() {
     let dir = temp_dir("range_span");
     // threshold=1 flushes every write to SSTable
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap(); // flushed to segment
     engine.set("c", "3").unwrap(); // flushed to segment
 
     // Reload with big threshold so new writes stay in memtable
-    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("b", "2").unwrap(); // stays in memtable
 
     let results = engine.range("a", "c").unwrap();
@@ -527,10 +542,10 @@ fn range_spans_memtable_and_segment() {
 fn range_memtable_wins_over_segment() {
     // Key written and flushed, then overwritten in memtable — range must return the newer value.
     let dir = temp_dir("range_memtable_wins");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "old").unwrap(); // flushed to segment
 
-    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "new").unwrap(); // in memtable
 
     let results = engine.range("a", "a").unwrap();
@@ -540,11 +555,11 @@ fn range_memtable_wins_over_segment() {
 #[test]
 fn range_tombstone_in_memtable_hides_flushed_key() {
     let dir = temp_dir("range_tombstone_flushed");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap(); // flushed to segment
     engine.set("b", "2").unwrap(); // flushed to segment
 
-    let mut engine = LsmEngine::from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.delete("a").unwrap(); // tombstone in memtable
 
     let results = engine.range("a", "b").unwrap();
@@ -555,7 +570,7 @@ fn range_tombstone_in_memtable_hides_flushed_key() {
 fn range_inverted_bounds_returns_empty() {
     // start > end is a malformed request — should return empty, not panic
     let dir = temp_dir("range_inverted");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
 
@@ -567,7 +582,7 @@ fn range_inverted_bounds_returns_empty() {
 fn range_single_key() {
     // start == end should return exactly that key if it exists
     let dir = temp_dir("range_single");
-    let mut engine = LsmEngine::new(&dir, "test", BIG_MEMTABLE).unwrap();
+    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -580,7 +595,7 @@ fn range_single_key() {
 fn range_after_compaction() {
     // Compaction rewrites segments — range must still return correct results afterwards
     let dir = temp_dir("range_compact");
-    let mut engine = LsmEngine::new(&dir, "test", 1).unwrap();
+    let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
