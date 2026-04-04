@@ -5,7 +5,9 @@
 This project implements a simple key-value store that communicates over TCP, built while reading *Designing Data-Intensive Applications*. It supports two storage engines selectable at startup:
 
 - **KV (Bitcask)** — hash index in memory, append-only segment files, hint files for fast startup.
-- **LSM** — in-memory memtable (BTreeMap) flushed to sorted string table (SSTable) segments, with sparse index for fast lookups and merge-sort compaction.
+- **LSM** — in-memory memtable (BTreeMap) flushed to sorted string table (SSTable) segments, with sparse index and Bloom filter per segment. Supports two pluggable compaction strategies:
+  - **Size-tiered** (default) — groups similarly-sized SSTables into buckets and compacts when a bucket reaches a threshold. Good write throughput.
+  - **Leveled** — LevelDB-style level-based compaction. L0 triggers on file count; L1+ trigger on byte budget (10× per level). Better read performance and space amplification.
 
 On startup, if an existing database directory is provided, the server rebuilds its state from segment files so that previously stored data is available immediately.
 The purpose of the project is merely didactical, but if you want to tinker with it feel free to do it.
@@ -35,6 +37,12 @@ cargo run -- <db_directory> [options]
 | `-msb`, `--max-segments-bytes` | Max bytes per segment before rolling | `52428800` (50MB) |
 | `-fsync`, `--fsync-interval` | Fsync strategy: `always`, `never`, `every:N` (every N writes), `every:Ns` (every N seconds) | `always` |
 | `-e`, `--engine`             | Storage engine: `kv` (Bitcask) or `lsm` (LSM-tree) | `kv` |
+| `-cr`, `--compaction-ratio`  | Auto-compact when dead/total bytes exceeds this ratio (LSM+KV). `0.0` disables | `0.0` |
+| `-cms`, `--compaction-max-segments` | Auto-compact when segment count exceeds this limit. `0` disables | `0` |
+| `-ss`, `--storage-strategy`  | LSM compaction strategy: `size-tiered` or `leveled` | `size-tiered` |
+| `-lnl`, `--leveled-num-levels` | Number of levels for leveled compaction | `4` |
+| `-ll0`, `--leveled-l0-threshold` | L0 file count before compaction (leveled only) | `4` |
+| `-ll1`, `--leveled-l1-max-bytes` | L1 max size in bytes; each subsequent level is 10× larger (leveled only) | `10485760` (10 MB) |
 
 ### Examples
 
