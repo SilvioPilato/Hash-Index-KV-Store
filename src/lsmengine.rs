@@ -90,6 +90,7 @@ impl StorageEngine for LsmEngine {
                 &self.db_path,
                 &self.db_name,
                 &self.memtable,
+                None,
             )?)?;
             self.memtable.clear();
             self.wal.reset()?;
@@ -110,6 +111,7 @@ impl StorageEngine for LsmEngine {
                 &self.db_path,
                 &self.db_name,
                 &self.memtable,
+                None,
             )?)?;
             self.memtable.clear();
             self.wal.reset()?;
@@ -123,6 +125,7 @@ impl StorageEngine for LsmEngine {
             &self.db_path,
             &self.db_name,
             &self.memtable,
+            None,
         )?)?;
         self.memtable.clear();
         self.storage_strategy

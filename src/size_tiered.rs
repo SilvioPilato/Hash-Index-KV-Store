@@ -106,7 +106,7 @@ impl StorageStrategy for SizeTiered {
 
             memtable.drop_tombstones();
 
-            let new_sst = SSTable::from_memtable(db_path, db_name, &memtable)?;
+            let new_sst = SSTable::from_memtable(db_path, db_name, &memtable, None)?;
             *bucket = vec![new_sst];
             return Ok(true);
         }
@@ -133,7 +133,9 @@ impl StorageStrategy for SizeTiered {
         }
         memtable.drop_tombstones();
 
-        self.sstables = vec![vec![SSTable::from_memtable(db_path, db_name, &memtable)?]];
+        self.sstables = vec![vec![SSTable::from_memtable(
+            db_path, db_name, &memtable, None,
+        )?]];
         Ok(())
     }
 

@@ -6,10 +6,6 @@
 
 Bloom filters and sparse indexes are currently rebuilt by scanning every SSTable file on startup. Serialize them to sidecar files (similar to hint files for Bitcask) so that LSM startup skips the full-file scan. Natural companion to the existing hint file infrastructure.
 
-## #27 — Leveled compaction (DDIA Ch. 3)
-
-Current LSM compaction merges all segments into a single SSTable. Real LSM-trees (LevelDB, RocksDB) use level-based compaction with size-tiered promotion between levels. Implementing this teaches write amplification tradeoffs and is the next natural step for the LSM engine.
-
 ## #28 — mmap for SSTable reads (DDIA Ch. 3)
 
 Memory-map SSTable files so lookups become pointer arithmetic instead of `read()` syscalls. Combined with the sparse index, this eliminates per-lookup I/O overhead. Good exercise in OS-level I/O and `unsafe` Rust, with platform-specific considerations (Windows vs. Unix).
@@ -79,6 +75,12 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
 # Closed Tasks
+
+## #27 — Leveled compaction (DDIA Ch. 3)
+
+Implemented LevelDB-style leveled compaction as a `StorageStrategy`. Added `Level` struct with self-contained compaction triggers (L0: file count threshold, L1+: byte budget with 10x scaling per level). Cross-level merge via `compact_levels` merges source files with overlapping target files in one pass. Tombstones preserved on non-terminal levels, dropped on terminal. Leveled SSTable filenames encode the level (`{name}_L{n}_{timestamp}.sst`) for correct placement on restart. Wired into `main.rs` via `--storage-strategy leveled` with three new CLI flags (`-lnl`, `-ll0`, `-ll1`). 34 new tests in `tests/leveled.rs`.
+
+PR: TBD
 
 ## #42 — Load generator / benchmark tool (`kvbench`)
 

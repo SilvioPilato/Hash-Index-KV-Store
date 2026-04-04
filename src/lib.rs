@@ -6,6 +6,7 @@ pub mod engine;
 pub mod hash_index;
 pub mod hint;
 pub mod kvengine;
+pub mod leveled;
 pub mod lsmengine;
 pub mod memtable;
 pub mod record;
