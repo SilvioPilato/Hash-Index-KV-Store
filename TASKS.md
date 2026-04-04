@@ -76,6 +76,12 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 # Closed Tasks
 
+## #60 — Extended kvbench scenarios (delete, overwrite, zipfian, mixed)
+
+Added four new benchmark scenarios to `kvbench`: (1) DELETE phase — deletes a configurable fraction of keys and re-reads to measure tombstone overhead; (2) OVERWRITE phase — overwrites surviving keys N times to measure write amplification; (3) Zipfian read distribution — hot-key skewed reads via `--zipf <s>` to test Bloom filter effectiveness; (4) Mixed concurrent mode — writers and readers hit overlapping keys simultaneously for a configurable duration, exposing lock contention. Introduced `BenchConfig` struct to bundle parameters. New CLI flags: `--delete-ratio`, `--overwrite-rounds`, `--zipf`, `--mixed-duration`.
+
+PR: <https://github.com/SilvioPilato/rustikv/pull/34>
+
 ## #27 — Leveled compaction (DDIA Ch. 3)
 
 Implemented LevelDB-style leveled compaction as a `StorageStrategy`. Added `Level` struct with self-contained compaction triggers (L0: file count threshold, L1+: byte budget with 10x scaling per level). Cross-level merge via `compact_levels` merges source files with overlapping target files in one pass. Tombstones preserved on non-terminal levels, dropped on terminal. Leveled SSTable filenames encode the level (`{name}_L{n}_{timestamp}.sst`) for correct placement on restart. Wired into `main.rs` via `--storage-strategy leveled` with three new CLI flags (`-lnl`, `-ll0`, `-ll1`). 34 new tests in `tests/leveled.rs`.
