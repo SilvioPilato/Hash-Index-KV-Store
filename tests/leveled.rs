@@ -26,7 +26,13 @@ fn engine_from_dir(
     db_name: &str,
     max_memtable_bytes: usize,
 ) -> std::io::Result<LsmEngine> {
-    let strategy = Box::new(Leveled::load_from_dir(dir, db_name, 4, 4, 10 * 1024 * 1024)?);
+    let strategy = Box::new(Leveled::load_from_dir(
+        dir,
+        db_name,
+        4,
+        4,
+        10 * 1024 * 1024,
+    )?);
     LsmEngine::from_dir(dir, db_name, max_memtable_bytes, strategy)
 }
 
@@ -513,10 +519,7 @@ fn compact_overwrites_keep_latest() {
     for round in 0..3 {
         for i in 0..10 {
             engine
-                .set(
-                    &format!("key{:03}", i),
-                    &format!("val_r{}_{}", round, i),
-                )
+                .set(&format!("key{:03}", i), &format!("val_r{}_{}", round, i))
                 .unwrap();
         }
     }

@@ -240,9 +240,10 @@ impl Leveled {
 
 impl StorageStrategy for Leveled {
     fn add_sstable(&mut self, sst: SSTable) -> io::Result<()> {
-        let l0 = self.levels.first_mut().ok_or_else(|| {
-            io::Error::other("Leveled storage strategy levels not allocated")
-        })?;
+        let l0 = self
+            .levels
+            .first_mut()
+            .ok_or_else(|| io::Error::other("Leveled storage strategy levels not allocated"))?;
         l0.append(sst);
         Ok(())
     }
