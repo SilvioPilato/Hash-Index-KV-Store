@@ -12,7 +12,7 @@ use std::io::{self};
 use std::{
     io::{BufReader, Read, Write},
     net::{TcpListener, TcpStream},
-    sync::{Arc, RwLock, atomic::Ordering},
+    sync::{Arc, atomic::Ordering},
     thread,
     time::Instant,
 };
@@ -30,15 +30,15 @@ fn log_verbose(message: impl AsRef<str>) {
 fn main() -> io::Result<()> {
     let settings = Settings::get_from_args();
 
-    let database: Box<dyn StorageEngine> = match settings.engine {
+    let database: Arc<dyn StorageEngine> = match settings.engine {
         EngineType::KV => match KVEngine::from_dir(
             &settings.db_file_path,
             &settings.db_name,
             settings.max_segment_bytes,
             settings.sync_strategy,
         )? {
-            Some(db) => Box::new(db),
-            None => Box::new(KVEngine::new(
+            Some(db) => Arc::new(db),
+            None => Arc::new(KVEngine::new(
                 &settings.db_file_path,
                 &settings.db_name,
                 settings.max_segment_bytes,
@@ -65,7 +65,7 @@ fn main() -> io::Result<()> {
                     )?),
                 };
 
-            Box::new(LsmEngine::from_dir(
+            Arc::new(LsmEngine::from_dir(
                 &settings.db_file_path,
                 &settings.db_name,
                 settings.max_segment_bytes as usize,
@@ -74,7 +74,6 @@ fn main() -> io::Result<()> {
         }
     };
 
-    let db_handle: Arc<RwLock<Box<dyn StorageEngine>>> = Arc::new(RwLock::new(database));
     let stats = Arc::new(Stats::new());
     let listener = TcpListener::bind(&settings.tcp_addr)?;
     let actual_addr = listener.local_addr()?;
@@ -97,7 +96,7 @@ fn main() -> io::Result<()> {
         match stream {
             Ok(mut stream) => {
                 log_verbose(format!("New connection: {}", stream.peer_addr().unwrap()));
-                let shared_db = Arc::clone(&db_handle);
+                let shared_db = Arc::clone(&database);
                 let shared_stats = Arc::clone(&stats);
                 thread::spawn(move || {
                     shared_stats
@@ -125,7 +124,7 @@ fn main() -> io::Result<()> {
 
 fn handle_stream(
     stream: &mut TcpStream,
-    database: Arc<RwLock<Box<dyn StorageEngine>>>,
+    database: Arc<dyn StorageEngine>,
     stats: &Arc<Stats>,
     compaction_ratio: f32,
     compaction_max_segment: usize,
@@ -144,7 +143,7 @@ fn handle_stream(
 
 fn handle_stream_inner(
     stream: &mut TcpStream,
-    database: Arc<RwLock<Box<dyn StorageEngine>>>,
+    database: Arc<dyn StorageEngine>,
     stats: &Arc<Stats>,
     compaction_ratio: f32,
     compaction_max_segment: usize,
@@ -187,10 +186,7 @@ fn handle_stream_inner(
                     stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
                 }
                 let lock_start = Instant::now();
-                let result = {
-                    let mut db = database.write().unwrap();
-                    db.set(&key, &value)
-                };
+                let result = { database.set(&key, &value) };
                 let lock_elapsed = lock_start.elapsed().as_millis() as u64;
                 stats
                     .write_blocked_total_ms
@@ -211,9 +207,8 @@ fn handle_stream_inner(
             }
             Command::Read(key) => {
                 log_verbose(format!("Parsed READ command: key='{}'", key));
-                let db = database.read().unwrap();
                 stats.reads.fetch_add(1, Ordering::Relaxed);
-                match db.get(&key) {
+                match database.get(&key) {
                     Ok(Some((_, v))) => encode_frame(ResponseStatus::Ok, &[v]),
                     Ok(None) => encode_frame(ResponseStatus::NotFound, &[]),
                     Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
@@ -221,10 +216,7 @@ fn handle_stream_inner(
             }
             Command::Delete(key) => {
                 log_verbose(format!("Parsed DELETE command: key='{}'", key));
-                let result = {
-                    let mut db = database.write().unwrap();
-                    db.delete(&key)
-                };
+                let result = { database.delete(&key) };
                 match result {
                     Ok(Some(())) => {
                         stats.deletes.fetch_add(1, Ordering::Relaxed);
@@ -258,8 +250,7 @@ fn handle_stream_inner(
                 let db_clone = Arc::clone(&database);
                 let stats_clone = Arc::clone(stats);
                 thread::spawn(move || {
-                    let mut db = db_clone.write().unwrap();
-                    db.compact().unwrap();
+                    db_clone.compact().unwrap();
 
                     stats_clone
                         .last_compact_end_ms
@@ -277,16 +268,12 @@ fn handle_stream_inner(
                     &[format!("Invalid op code: {}", op_code)],
                 )
             }
-            Command::List => {
-                let db = database.read().unwrap();
-                match db.list_keys() {
-                    Ok(keys) => encode_frame(ResponseStatus::Ok, &keys),
-                    Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
-                }
-            }
+            Command::List => match database.list_keys() {
+                Ok(keys) => encode_frame(ResponseStatus::Ok, &keys),
+                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
+            },
             Command::Exists(key) => {
-                let db = database.read().unwrap();
-                if db.exists(&key) {
+                if database.exists(&key) {
                     encode_frame(ResponseStatus::Ok, &[])
                 } else {
                     encode_frame(ResponseStatus::NotFound, &[])
@@ -295,8 +282,7 @@ fn handle_stream_inner(
             Command::Ping => encode_frame(ResponseStatus::Ok, &["PONG".to_string()]),
             Command::Mget(keys) => {
                 log_verbose("Parsed MGET command");
-                let db = database.read().unwrap();
-                match db.mget(keys) {
+                match database.mget(keys) {
                     Ok(items) => {
                         let key_count = items.len() as u64;
 
@@ -321,10 +307,7 @@ fn handle_stream_inner(
                 let item_count = items.len() as u64;
 
                 let lock_start = Instant::now();
-                let result = {
-                    let mut db = database.write().unwrap();
-                    db.mset(items)
-                };
+                let result = { database.mset(items) };
                 let lock_elapsed = lock_start.elapsed().as_millis() as u64;
                 stats
                     .write_blocked_total_ms
@@ -349,8 +332,7 @@ fn handle_stream_inner(
                     "Parsed RANGE command: start='{}' end={}",
                     start, end
                 ));
-                let db = database.read().unwrap();
-                match db.as_any().downcast_ref::<LsmEngine>() {
+                match database.as_any().downcast_ref::<LsmEngine>() {
                     Some(lsm) => match lsm.range(&start, &end) {
                         Ok(results) => {
                             let results_count = results.len();
@@ -378,19 +360,16 @@ fn handle_stream_inner(
 }
 
 fn maybe_trigger_compaction(
-    database: Arc<RwLock<Box<dyn StorageEngine>>>,
+    database: Arc<dyn StorageEngine>,
     stats: &Arc<Stats>,
     compaction_ratio: f32,
     compaction_max_segment: usize,
 ) {
-    let db_clone_read = Arc::clone(&database);
-    let db_clone_write = Arc::clone(&database);
     let should_compact = {
-        let db = db_clone_read.read().unwrap();
         (compaction_ratio > 0.0
-            && db.total_bytes() > 0
-            && db.dead_bytes() as f32 / db.total_bytes() as f32 > compaction_ratio)
-            || (compaction_max_segment > 0 && db.segment_count() > compaction_max_segment)
+            && database.total_bytes() > 0
+            && database.dead_bytes() as f32 / database.total_bytes() as f32 > compaction_ratio)
+            || (compaction_max_segment > 0 && database.segment_count() > compaction_max_segment)
     };
 
     let stats_clone = Arc::clone(stats);
@@ -406,8 +385,7 @@ fn maybe_trigger_compaction(
             .last_compact_start_ms
             .store(Stats::now_ms(), Ordering::Relaxed);
         thread::spawn(move || {
-            let mut db = db_clone_write.write().unwrap();
-            db.compact().unwrap();
+            database.compact().unwrap();
 
             stats_clone
                 .last_compact_end_ms

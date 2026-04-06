@@ -96,15 +96,15 @@ Note: the `immutable` read lock is released before acquiring `storage_strategy` 
 2. Lock `immutable` (read) — check frozen memtable if present.
 3. Lock `storage_strategy` (read) — iterate SSTables newest-to-oldest with bloom filter checks.
 
-Each lock is acquired and released independently. All read locks — multiple readers proceed in parallel.
+Each lock is acquired and released independently. All read locks — multiple readers proceed in parallel. Since all three are read locks, acquisition order does not matter for deadlock safety (only read-vs-write or write-vs-write orderings can deadlock). The canonical ordering is preferred by convention but not required.
 
 **Range scan (`range` on `RangeScan` trait):**
 
-Same lock protocol as `get` — acquires `active` (read), `immutable` (read), `storage_strategy` (read) in order. Each lock acquired and released independently. Results merged from all three sources.
+Same lock protocol as `get` — acquires `active` (read), `immutable` (read), `storage_strategy` (read). Each lock acquired and released independently. Results merged from all three sources. Same deadlock-safety note as `get` applies — read-only paths are order-independent.
 
 **`delete` — TOCTOU note:** `delete()` calls `self.get()` to check existence, then writes a tombstone. Between the read and write, another writer could modify the key. This is acceptable: a tombstone for a non-existent key is harmless in an LSM (compaction drops it). No atomicity guarantee needed.
 
-**`list_keys`:** Acquires locks in canonical order: `active` (read), `immutable` (read), then `storage_strategy` (read). The implementation must be rewritten from the current code (which accesses segments first, then memtable) to follow the declared lock ordering and avoid deadlocks. Since reads are independent snapshots, a concurrent flush could cause a key to appear in both or neither — this is acceptable for `list_keys` which is informational, not transactional.
+**`list_keys`:** Acquires `active` (read), `immutable` (read), and `storage_strategy` (read). Since all three are read locks, acquisition order does not matter for deadlock safety — `RwLock` read locks cannot deadlock with each other (only read-vs-write or write-vs-write orderings can deadlock). The canonical ordering is preferred by convention but not required. Since reads are independent snapshots, a concurrent flush could cause a key to appear in both or neither — this is acceptable for `list_keys` which is informational, not transactional.
 
 **`compact`:** Acquires `wal` → `active` (write) → `storage_strategy` (write). All three locks are held simultaneously for the duration of the compact operation — WAL is not released and re-acquired. Under these locks: flush memtable to SSTable, clear memtable, reset WAL, run `compact_all` on the strategy. Full compaction redesign is out of scope, but this minimal lock discipline prevents deadlocks.
 

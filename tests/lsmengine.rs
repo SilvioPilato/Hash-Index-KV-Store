@@ -1,6 +1,8 @@
 use rustikv::engine::{RangeScan, StorageEngine};
 use rustikv::lsmengine::LsmEngine;
 use rustikv::size_tiered::SizeTiered;
+use std::sync::Arc;
+use std::thread;
 use std::{env, fs, time::SystemTime};
 
 fn temp_dir(suffix: &str) -> String {
@@ -77,10 +79,14 @@ fn delete_nonexistent_key() {
 fn memtable_flushes_to_sstable() {
     let dir = temp_dir("flush");
     // Tiny threshold so a single write triggers a flush
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
-    engine.set("k1", "v1").unwrap();
+    {
+        let engine = new_engine(&dir, "test", 1).unwrap();
+        engine.set("k1", "v1").unwrap();
+    } // drop joins the background flush
 
-    // After flush, memtable is cleared but data is readable from SSTable
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+
+    // After flush, data is readable from SSTable
     let (_, v) = engine.get("k1").unwrap().unwrap();
     assert_eq!(v, "v1");
 
@@ -411,8 +417,9 @@ fn list_keys_spans_memtable_and_segments() {
     let mut engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("x", "1").unwrap();
     engine.set("y", "2").unwrap();
+    drop(engine);
     // Reload from disk and write one more key — it stays in the memtable
-    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("z", "3").unwrap();
 
     let mut keys = engine.list_keys().unwrap();
@@ -519,12 +526,13 @@ fn range_tombstone_suppression() {
 fn range_spans_memtable_and_segment() {
     let dir = temp_dir("range_span");
     // threshold=1 flushes every write to SSTable
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap(); // flushed to segment
     engine.set("c", "3").unwrap(); // flushed to segment
+    drop(engine);
 
     // Reload with big threshold so new writes stay in memtable
-    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("b", "2").unwrap(); // stays in memtable
 
     let results = engine.range("a", "c").unwrap();
@@ -555,11 +563,12 @@ fn range_memtable_wins_over_segment() {
 #[test]
 fn range_tombstone_in_memtable_hides_flushed_key() {
     let dir = temp_dir("range_tombstone_flushed");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap(); // flushed to segment
     engine.set("b", "2").unwrap(); // flushed to segment
+    drop(engine);
 
-    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.delete("a").unwrap(); // tombstone in memtable
 
     let results = engine.range("a", "b").unwrap();
@@ -610,5 +619,245 @@ fn range_after_compaction() {
             ("b".to_string(), "2".to_string()),
             ("c".to_string(), "3".to_string())
         ]
+    );
+}
+
+// --- Concurrency tests ---
+
+#[test]
+fn concurrent_writes_no_lost_keys() {
+    let dir = temp_dir("conc_writes");
+    let engine = Arc::new(new_engine(&dir, "test", BIG_MEMTABLE).unwrap());
+    let num_threads = 8;
+    let keys_per_thread = 200;
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|t| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for i in 0..keys_per_thread {
+                    let key = format!("t{t}_k{i}");
+                    let value = format!("t{t}_v{i}");
+                    db.set(&key, &value).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    for t in 0..num_threads {
+        for i in 0..keys_per_thread {
+            let key = format!("t{t}_k{i}");
+            let expected = format!("t{t}_v{i}");
+            let (_, actual) = engine.get(&key).unwrap().unwrap();
+            assert_eq!(actual, expected, "missing or wrong value for {key}");
+        }
+    }
+}
+
+#[test]
+fn concurrent_reads_return_correct_values() {
+    let dir = temp_dir("conc_reads");
+    let engine = Arc::new(new_engine(&dir, "test", BIG_MEMTABLE).unwrap());
+
+    let num_keys = 100;
+    for i in 0..num_keys {
+        let key = format!("key_{i:03}");
+        let value = format!("value_{}", "x".repeat(i % 64 + 1));
+        engine.set(&key, &value).unwrap();
+    }
+
+    let expected: Arc<Vec<(String, String)>> = Arc::new(
+        (0..num_keys)
+            .map(|i| {
+                let key = format!("key_{i:03}");
+                let value = format!("value_{}", "x".repeat(i % 64 + 1));
+                (key, value)
+            })
+            .collect(),
+    );
+
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let db = Arc::clone(&engine);
+            let expected = Arc::clone(&expected);
+            thread::spawn(move || {
+                for _ in 0..100 {
+                    for (key, expected_value) in expected.iter() {
+                        let (_, actual) = db.get(key).unwrap().unwrap();
+                        assert_eq!(actual, *expected_value, "wrong value for {key}");
+                    }
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn concurrent_reads_and_writes() {
+    let dir = temp_dir("conc_rw");
+    let engine = Arc::new(new_engine(&dir, "test", BIG_MEMTABLE).unwrap());
+
+    // Pre-populate so readers always have something to find
+    for i in 0..50 {
+        engine.set(&format!("k{i}"), &format!("v{i}")).unwrap();
+    }
+
+    let writers: Vec<_> = (0..4)
+        .map(|t| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for i in 0..200 {
+                    let key = format!("w{t}_{i}");
+                    db.set(&key, &format!("val_{i}")).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for round in 0..200 {
+                    let key = format!("k{}", round % 50);
+                    let result = db.get(&key).unwrap();
+                    assert!(result.is_some(), "pre-populated key {key} must exist");
+                }
+            })
+        })
+        .collect();
+
+    for h in writers.into_iter().chain(readers) {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn concurrent_writes_trigger_flush() {
+    let dir = temp_dir("conc_flush");
+    // Tiny threshold so concurrent writes trigger flushes
+    let engine = Arc::new(new_engine(&dir, "test", 128).unwrap());
+    let num_threads = 4;
+    let keys_per_thread = 100;
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|t| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for i in 0..keys_per_thread {
+                    let key = format!("t{t}_k{i}");
+                    let value = format!("value_{}", "x".repeat(20));
+                    db.set(&key, &value).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+    // Unwrap the Arc and drop to join the last background flush
+    match Arc::try_unwrap(engine) {
+        Ok(engine) => drop(engine),
+        Err(_) => panic!("Arc still has other refs"),
+    }
+
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+
+    // All keys must be readable (from memtable or flushed SSTables)
+    for t in 0..num_threads {
+        for i in 0..keys_per_thread {
+            let key = format!("t{t}_k{i}");
+            let result = engine.get(&key).unwrap();
+            assert!(result.is_some(), "key {key} lost after concurrent flushes");
+        }
+    }
+
+    let sst_count = fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().to_string_lossy().to_string();
+            name.ends_with(".sst").then_some(name)
+        })
+        .count();
+    assert!(
+        sst_count > 0,
+        "expected at least one .sst from concurrent writes"
+    );
+}
+
+#[test]
+fn concurrent_delete_and_read() {
+    let dir = temp_dir("conc_delete");
+    let engine = Arc::new(new_engine(&dir, "test", BIG_MEMTABLE).unwrap());
+
+    for i in 0..100 {
+        engine.set(&format!("k{i}"), &format!("v{i}")).unwrap();
+    }
+
+    let deleter = {
+        let db = Arc::clone(&engine);
+        thread::spawn(move || {
+            for i in 0..100 {
+                db.delete(&format!("k{i}")).unwrap();
+            }
+        })
+    };
+
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for _ in 0..100 {
+                    for i in 0..100 {
+                        let key = format!("k{i}");
+                        match db.get(&key).unwrap() {
+                            Some((_, v)) => assert_eq!(v, format!("v{i}")),
+                            None => {} // deleted, fine
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    deleter.join().unwrap();
+    for h in readers {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn concurrent_overwrite_last_writer_wins() {
+    let dir = temp_dir("conc_overwrite");
+    let engine = Arc::new(new_engine(&dir, "test", BIG_MEMTABLE).unwrap());
+
+    let handles: Vec<_> = (0..8)
+        .map(|t| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for i in 0..500 {
+                    db.set("contested", &format!("t{t}_i{i}")).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let (_, val) = engine.get("contested").unwrap().unwrap();
+    assert!(
+        val.starts_with('t'),
+        "value should come from a writer thread: {val}"
     );
 }

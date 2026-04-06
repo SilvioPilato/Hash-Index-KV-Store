@@ -76,6 +76,10 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 # Closed Tasks
 
+## #61 — Engine-internal concurrency: write buffering and fine-grained locking
+
+Replace the single global `Arc<RwLock<Box<dyn StorageEngine>>>` with engine-internal locking so readers never wait for writers. `StorageEngine` trait methods change from `&mut self` to `&self` (interior mutability). KVEngine gets a write buffer (`RwLock<HashMap>`) with WAL for durability and batched flushes to disk. LsmEngine gets double-buffered memtables — an active `RwLock<Memtable>` and an immutable `RwLock<Option<Memtable>>` flushed to SSTable in a background thread. Both engines define explicit lock orderings to prevent deadlocks. `main.rs` drops the global lock entirely. Compaction blocking is out of scope (separate task). Design spec: `docs/superpowers/specs/2026-04-05-engine-concurrency-design.md`.
+
 ## #60 — Extended kvbench scenarios (delete, overwrite, zipfian, mixed)
 
 Added four new benchmark scenarios to `kvbench`: (1) DELETE phase — deletes a configurable fraction of keys and re-reads to measure tombstone overhead; (2) OVERWRITE phase — overwrites surviving keys N times to measure write amplification; (3) Zipfian read distribution — hot-key skewed reads via `--zipf <s>` to test Bloom filter effectiveness; (4) Mixed concurrent mode — writers and readers hit overlapping keys simultaneously for a configurable duration, exposing lock contention. Introduced `BenchConfig` struct to bundle parameters. New CLI flags: `--delete-ratio`, `--overwrite-rounds`, `--zipf`, `--mixed-duration`.

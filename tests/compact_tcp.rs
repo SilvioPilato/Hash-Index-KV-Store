@@ -203,6 +203,7 @@ fn compact_command_over_tcp() {
     wait_for_server();
 
     assert_eq!(send_command("COMPACT"), "OK");
+    wait_for_compaction();
     assert_eq!(send_command("WRITE k1 v1"), "OK");
     assert_eq!(send_command("COMPACT"), "OK");
     wait_for_compaction();

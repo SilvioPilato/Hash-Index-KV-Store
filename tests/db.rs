@@ -1,12 +1,7 @@
 use rustikv::engine::StorageEngine;
 use rustikv::kvengine::KVEngine;
 use rustikv::settings::FSyncStrategy;
-use std::{
-    env,
-    sync::{Arc, RwLock},
-    thread,
-    time::SystemTime,
-};
+use std::{env, sync::Arc, thread, time::SystemTime};
 
 const DEFAULT_MAX_SEGMENT_BYTES: u64 = 1_048_576 * 50;
 
@@ -280,7 +275,7 @@ fn concurrent_reads_return_correct_values() {
             .collect(),
     );
 
-    let db = Arc::new(RwLock::new(db));
+    let db = Arc::new(db);
 
     let handles: Vec<_> = (0..8)
         .map(|_| {
@@ -289,8 +284,7 @@ fn concurrent_reads_return_correct_values() {
             thread::spawn(move || {
                 for _ in 0..200 {
                     for (key, expected_value) in expected.iter() {
-                        let guard = db.read().unwrap();
-                        let (_, actual) = guard.get(key).unwrap().unwrap();
+                        let (_, actual) = db.get(key).unwrap().unwrap();
                         assert_eq!(
                             actual, *expected_value,
                             "concurrent read returned wrong value for key '{key}'"
@@ -408,4 +402,176 @@ fn exists_returns_false_after_delete() {
     db.set("k", "v").unwrap();
     db.delete("k").unwrap();
     assert!(!db.exists("k"));
+}
+
+// --- Concurrency tests ---
+
+#[test]
+fn concurrent_writes_no_lost_keys() {
+    let engine = Arc::new(
+        KVEngine::new(
+            &temp_db_path("conc_writes"),
+            "test",
+            DEFAULT_MAX_SEGMENT_BYTES,
+            FSyncStrategy::Never,
+        )
+        .unwrap(),
+    );
+    let num_threads = 8;
+    let keys_per_thread = 200;
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|t| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for i in 0..keys_per_thread {
+                    let key = format!("t{t}_k{i}");
+                    let value = format!("t{t}_v{i}");
+                    db.set(&key, &value).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    for t in 0..num_threads {
+        for i in 0..keys_per_thread {
+            let key = format!("t{t}_k{i}");
+            let expected = format!("t{t}_v{i}");
+            let (_, actual) = engine.get(&key).unwrap().unwrap();
+            assert_eq!(actual, expected, "missing or wrong value for {key}");
+        }
+    }
+}
+
+#[test]
+fn concurrent_reads_and_writes() {
+    let engine = Arc::new(
+        KVEngine::new(
+            &temp_db_path("conc_rw"),
+            "test",
+            DEFAULT_MAX_SEGMENT_BYTES,
+            FSyncStrategy::Never,
+        )
+        .unwrap(),
+    );
+
+    // Pre-populate so readers always find something
+    for i in 0..50 {
+        engine.set(&format!("k{i}"), &format!("v{i}")).unwrap();
+    }
+
+    let writers: Vec<_> = (0..4)
+        .map(|t| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for i in 0..200 {
+                    let key = format!("w{t}_{i}");
+                    db.set(&key, &format!("val_{i}")).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for round in 0..200 {
+                    let key = format!("k{}", round % 50);
+                    let result = db.get(&key).unwrap();
+                    assert!(result.is_some(), "pre-populated key {key} must exist");
+                }
+            })
+        })
+        .collect();
+
+    for h in writers.into_iter().chain(readers) {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn concurrent_delete_and_read() {
+    let engine = Arc::new(
+        KVEngine::new(
+            &temp_db_path("conc_delete"),
+            "test",
+            DEFAULT_MAX_SEGMENT_BYTES,
+            FSyncStrategy::Never,
+        )
+        .unwrap(),
+    );
+
+    for i in 0..100 {
+        engine.set(&format!("k{i}"), &format!("v{i}")).unwrap();
+    }
+
+    let deleter = {
+        let db = Arc::clone(&engine);
+        thread::spawn(move || {
+            for i in 0..100 {
+                db.delete(&format!("k{i}")).unwrap();
+            }
+        })
+    };
+
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for _ in 0..100 {
+                    for i in 0..100 {
+                        let key = format!("k{i}");
+                        match db.get(&key).unwrap() {
+                            Some((_, v)) => assert_eq!(v, format!("v{i}")),
+                            None => {} // deleted, fine
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    deleter.join().unwrap();
+    for h in readers {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn concurrent_overwrite_last_writer_wins() {
+    let engine = Arc::new(
+        KVEngine::new(
+            &temp_db_path("conc_overwrite"),
+            "test",
+            DEFAULT_MAX_SEGMENT_BYTES,
+            FSyncStrategy::Never,
+        )
+        .unwrap(),
+    );
+
+    let handles: Vec<_> = (0..8)
+        .map(|t| {
+            let db = Arc::clone(&engine);
+            thread::spawn(move || {
+                for i in 0..500 {
+                    db.set("contested", &format!("t{t}_i{i}")).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let (_, val) = engine.get("contested").unwrap().unwrap();
+    assert!(
+        val.starts_with('t'),
+        "value should come from a writer thread: {val}"
+    );
 }
