@@ -192,7 +192,7 @@ impl KVEngine {
 
     /// Builds a compacted KVEngine from the current state, returning
     /// the new engine without modifying self.
-    fn build_compacted(&self) -> Result<KVEngine, Error> {
+    fn build_compacted(&self) -> Result<(KVEngine, Vec<Segment>), Error> {
         let old_segments = get_segments(&self.db_path, &self.db_name)?;
         let new_db = KVEngine::new(
             &self.db_path,
@@ -218,14 +218,13 @@ impl KVEngine {
             file_lock.file.sync_all()?;
         }
 
-        for segment in &old_segments {
-            fs::remove_file(segment.path(&self.db_path))?;
-            let _ = fs::remove_file(segment.hint_path(&self.db_path));
-        }
-
+        // Write hint files for the new segments (filter out old ones).
         {
             let new_index_lock = new_db.index.read().unwrap();
-            let new_segments = get_segments(&self.db_path, &self.db_name)?;
+            let new_segments: Vec<_> = get_segments(&self.db_path, &self.db_name)?
+                .into_iter()
+                .filter(|s| !old_segments.iter().any(|o| o.timestamp == s.timestamp))
+                .collect();
             for segment in &new_segments {
                 let hint_entries: Vec<HintEntry> = new_index_lock
                     .ls_keys()
@@ -247,7 +246,9 @@ impl KVEngine {
             }
         }
 
-        Ok(new_db)
+        // Don't delete old segments here — compact() deletes them
+        // after swapping the index, so concurrent readers are safe.
+        Ok((new_db, old_segments))
     }
 
     /// Closes the current active segment and opens a new one.
@@ -333,7 +334,7 @@ impl StorageEngine for KVEngine {
     /// Compacts the database by rewriting only live key-value pairs into
     /// fresh segments, then deleting the old segment and hint files.
     fn compact(&self) -> Result<(), Error> {
-        let new_db = self.build_compacted()?;
+        let (new_db, old_segments) = self.build_compacted()?;
 
         let mut wal = self.wal.lock().unwrap();
         let mut file_state = self.active_file.lock().unwrap();
@@ -349,6 +350,18 @@ impl StorageEngine for KVEngine {
 
         wal.reset()?;
 
+        // Drop all locks before file deletion — the index now points
+        // to new segments, so no reader will reference old files.
+        drop(index_guard);
+        drop(segment_guard);
+        drop(file_state);
+        drop(wal);
+
+        for segment in &old_segments {
+            fs::remove_file(segment.path(&self.db_path))?;
+            let _ = fs::remove_file(segment.hint_path(&self.db_path));
+        }
+
         Ok(())
     }
 
@@ -360,22 +373,21 @@ impl StorageEngine for KVEngine {
     ///
     /// Returns `Ok(None)` if the key is not in the index.
     fn get(&self, key: &str) -> Result<Option<(String, String)>, Error> {
-        let (segment_offset, segment_timestamp, active_timestamp, active_path) = {
-            let active_segment = self.active_segment.lock().unwrap();
-            let index = self.index.read().unwrap();
-            let entry = match index.get(key) {
-                Some(o) => o,
-                None => return Ok(None),
-            };
-
-            (
-                entry.offset,
-                entry.segment_timestamp,
-                active_segment.timestamp,
-                active_segment.path(&self.db_path),
-            )
+        let active_segment = self.active_segment.lock().unwrap();
+        let index = self.index.read().unwrap();
+        let entry = match index.get(key) {
+            Some(o) => o,
+            None => return Ok(None),
         };
 
+        let segment_offset = entry.offset;
+        let segment_timestamp = entry.segment_timestamp;
+        let active_timestamp = active_segment.timestamp;
+        let active_path = active_segment.path(&self.db_path);
+        drop(active_segment);
+
+        // Hold index read lock across file I/O so compact() cannot
+        // swap the index and delete old segment files while we read.
         let mut file = if segment_timestamp == active_timestamp {
             File::open(active_path)?
         } else {
@@ -388,6 +400,7 @@ impl StorageEngine for KVEngine {
 
         file.seek(SeekFrom::Start(segment_offset))?;
         let record = Record::read_next(&mut file)?;
+        drop(index);
 
         Ok(Some((record.key, record.value)))
     }
