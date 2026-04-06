@@ -116,8 +116,12 @@ fn delete_nonexistent_key() {
 #[test]
 fn memtable_flushes_to_sstable() {
     let dir = temp_dir("flush");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
-    engine.set("k1", "v1").unwrap();
+    {
+        let engine = new_engine(&dir, "test", 1).unwrap();
+        engine.set("k1", "v1").unwrap();
+    } // drop joins the background flush
+
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
 
     let (_, v) = engine.get("k1").unwrap().unwrap();
     assert_eq!(v, "v1");
@@ -358,10 +362,11 @@ fn list_keys_excludes_deleted_keys() {
 #[test]
 fn list_keys_spans_memtable_and_segments() {
     let dir = temp_dir("list_keys_segments");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("x", "1").unwrap();
     engine.set("y", "2").unwrap();
-    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    drop(engine);
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("z", "3").unwrap();
 
     let mut keys = engine.list_keys().unwrap();
@@ -393,11 +398,12 @@ fn range_basic_memtable() {
 #[test]
 fn range_spans_memtable_and_segment() {
     let dir = temp_dir("range_span");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("c", "3").unwrap();
+    drop(engine);
 
-    let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("b", "2").unwrap();
 
     let results = engine.range("a", "c").unwrap();
@@ -538,11 +544,13 @@ fn compact_overwrites_keep_latest() {
 #[test]
 fn segment_count_after_compact() {
     let dir = temp_dir("seg_count");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
+    drop(engine);
 
+    let engine = engine_from_dir(&dir, "test", 1).unwrap();
     assert!(engine.segment_count() >= 3);
 
     engine.compact().unwrap();
