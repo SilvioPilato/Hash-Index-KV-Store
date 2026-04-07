@@ -84,6 +84,8 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Move `drop(index)` in `KVEngine::get()` right after `File::open`, before `seek`+`read`. Once the fd is open the file data survives segment deletion, so holding the read lock across I/O was unnecessary. Eliminates the large-payload regression from #61 and dramatically improves KV/always concurrent reads.
 
+PR: <https://github.com/SilvioPilato/rustikv/pull/36>
+
 ## #61 — Engine-internal concurrency: write buffering and fine-grained locking
 
 Replace the single global `Arc<RwLock<Box<dyn StorageEngine>>>` with engine-internal locking so readers never wait for writers. `StorageEngine` trait methods change from `&mut self` to `&self` (interior mutability). KVEngine gets a write buffer (`RwLock<HashMap>`) with WAL for durability and batched flushes to disk. LsmEngine gets double-buffered memtables — an active `RwLock<Memtable>` and an immutable `RwLock<Option<Memtable>>` flushed to SSTable in a background thread. Both engines define explicit lock orderings to prevent deadlocks. `main.rs` drops the global lock entirely. Compaction blocking is out of scope (separate task). Design spec: `docs/superpowers/specs/2026-04-05-engine-concurrency-design.md`.
