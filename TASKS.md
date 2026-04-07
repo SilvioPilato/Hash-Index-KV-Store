@@ -2,6 +2,10 @@
 
 # Open Tasks
 
+## #62 — Versioned snapshots for KVEngine (RocksDB-style)
+
+Replace the `RwLock<HashIndex>` in KVEngine with `RwLock<Arc<Version>>` where `Version` holds the index + segment list. Readers clone the Arc and release the lock before file I/O, eliminating the concurrent throughput regression from #61. Old segments stay alive until the last reader drops its Arc. Compaction waits for in-flight readers before deleting old files.
+
 ## #26 — Persist Bloom filters and sparse index to disk (DDIA Ch. 3)
 
 Bloom filters and sparse indexes are currently rebuilt by scanning every SSTable file on startup. Serialize them to sidecar files (similar to hint files for Bitcask) so that LSM startup skips the full-file scan. Natural companion to the existing hint file infrastructure.
@@ -75,6 +79,10 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
 # Closed Tasks
+
+## #63 — Early index drop in KVEngine get()
+
+Move `drop(index)` in `KVEngine::get()` right after `File::open`, before `seek`+`read`. Once the fd is open the file data survives segment deletion, so holding the read lock across I/O was unnecessary. Eliminates the large-payload regression from #61 and dramatically improves KV/always concurrent reads.
 
 ## #61 — Engine-internal concurrency: write buffering and fine-grained locking
 

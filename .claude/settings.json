@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git remote:*)",
+      "Bash(git add:*)",
+      "Bash(gh pr:*)",
+      "Bash(git pull:*)",
+      "Bash(taskkill /F /IM rustikv.exe)",
+      "Bash(taskkill //F //IM rustikv.exe)",
+      "Read(//c/Users/Silvio/.claude/projects/c--Users-Silvio-Dev-kv-store/memory/**)",
+      "Bash(cargo check:*)",
+      "Bash(./target/debug/kvbench.exe --help)",
+      "Bash(cargo run:*)",
+      "Read(//c/Users/Silvio/AppData/Local/Temp/claude/c--Users-Silvio-Dev-kv-store/79ff6272-9932-4628-bcd3-b2ab8e5b47dd/tasks/**)"
+    ],
+    "additionalDirectories": [
+      "C:\\Temp"
+    ]
+  }
+}
