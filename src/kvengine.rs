@@ -397,10 +397,9 @@ impl StorageEngine for KVEngine {
             };
             File::open(segment.path(&self.db_path))?
         };
-
+        drop(index);
         file.seek(SeekFrom::Start(segment_offset))?;
         let record = Record::read_next(&mut file)?;
-        drop(index);
 
         Ok(Some((record.key, record.value)))
     }
