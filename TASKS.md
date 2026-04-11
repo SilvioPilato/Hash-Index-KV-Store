@@ -78,6 +78,10 @@ Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration.
 
 Apply the block-based compression format (from #29) to the KV engine's append-only segments. Partition segments into fixed-size blocks with optional LZ77 compression per block. Update the hash index rebuild to work with blocks. Enables compression benefits for the Bitcask-style engine and demonstrates that block layouts are engine-agnostic. Depends on #29 (block format, LZ77 codec).
 
+## #63 — Upgrade LZ77 to control-byte encoding (compression optimization, low priority)
+
+Replace the varint-based LZ77 encoding (from #29) with control-byte encoding (Deflate/zlib style). Each control byte represents 8 operations (literals or match references), reducing metadata overhead and improving compression ratio by ~5%. Depends on #29. Low priority—varint is "good enough" for most workloads; this is a performance/space optimization for production use.
+
 # Closed Tasks
 
 ## #61 — Engine-internal concurrency: write buffering and fine-grained locking
