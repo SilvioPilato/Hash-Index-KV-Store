@@ -49,6 +49,8 @@ Block Body:
 - `compression_flag` allows mixed compression strategies (useful for future extensions).
 - Reserved bytes allow per-block checksums (e.g., CRC) in the future without breaking the format.
 
+**Block Size Note**: The target block size (default 4 KB) is a target, not a hard limit. If a single record exceeds the block size, that record occupies its own block alone, which may exceed the target. This matches production databases (RocksDB, LevelDB) and is acceptable because large records are rare in practice and still benefit from compression.
+
 ### SSTable On-Disk Layout
 
 ```
