@@ -61,15 +61,10 @@ SSTable file:
 │ ...                                         │
 ├─────────────────────────────────────────────┤
 │ Block N (Header + Data, possibly compressed)│
-├─────────────────────────────────────────────┤
-│ Sparse Index Footer:                        │
-│   - block_count (u32)                       │
-│   - sparse_index entries                    │
-│   - index_offset (u64)                      │
 └─────────────────────────────────────────────┘
 ```
 
-The sparse index is appended at the end so we know how many blocks exist before seeking to them.
+**Index Storage**: The sparse index is **not persisted in the file**. It is rebuilt on startup by scanning all blocks (similar to current `rebuild_index()` behavior). This simplifies the on-disk format and matches existing patterns.
 
 ### Sparse Index
 
@@ -79,6 +74,7 @@ The sparse index is appended at the end so we know how many blocks exist before 
 - Sample every Nth block (configurable, default = 1, meaning every block).
 - For Nth = 1 (dense), we have full precision. For Nth = 16 (coarse), we sample every 16th block.
 - At minimum, the first block is always indexed.
+- Built during write (track sampled blocks) and verified by `rebuild_index()` on startup.
 
 **Lookup flow**:
 1. Binary search sparse index on key name → find the block to start scanning.
@@ -86,11 +82,11 @@ The sparse index is appended at the end so we know how many blocks exist before 
 3. Open SSTable file, seek to block offset.
 4. Read block header, decompress if needed.
 5. Scan decompressed records for target key.
-6. If key not found and there are more blocks, continue to next block (handles records spanning blocks).
+6. If key not found in current block, try next block (blocks are ordered; records don't split across blocks).
 
-**Rationale**: Block-level indexing is standard in production databases (RocksDB, LevelDB). It aligns with the compression boundary and avoids needing to track record offsets within compressed data.
+**Rationale**: Block-level indexing is standard in production databases (RocksDB, LevelDB). It aligns with the compression boundary and avoids needing to track record offsets within compressed data. Since records don't span blocks, the index gives exact block boundaries.
 
-### Records Spanning Blocks
+### Records Not Spanning Blocks
 
 When filling a block during write:
 
@@ -98,20 +94,23 @@ When filling a block during write:
 loop {
     let record = next_record();
     if current_block_size + record.size_on_disk() > block_size_kb {
-        // Block would overflow; close it and compress.
+        // Block would overflow; close it and start a new one.
         flush_and_compress_block();
         start_new_block();
     }
+    // Record now fits in current block (or is alone in new block).
     append_record_to_block(record);
 }
 ```
 
-**Read behavior**: After decompressing a block and not finding the key, the reader naturally continues to the next block. No explicit handling needed; split records are discovered during the scan.
+**Why no spanning**:
 
-**Why this approach**:
-- Predictable block sizes (~4 KB), good space utilization.
-- Records are never fragmented within compressed data (the record is either entirely in one block or entirely in the next).
-- Decompression is straightforward: decompress block → iterate records → find key.
+- Records are never split across block boundaries.
+- Simplifies decompression: read block header, decompress, iterate complete records.
+- Aligns with production database patterns (LevelDB, RocksDB).
+- Block-level sparse index is exact: each sampled block contains specific key ranges.
+
+**Edge case**: If a single record is larger than the block size, it occupies its own block alone.
 
 ### Bloom Filter
 
@@ -208,19 +207,21 @@ OR simpler approach:
 
 ```
 from_memtable(memtable):
-  1. Create a block writer with target block size.
+  1. Create a block writer with target block size (e.g., 4 KB).
   2. For each (key, value) in memtable.entries():
      a. Serialize as Record (existing format).
-     b. Append to current block buffer.
-     c. If block buffer exceeds target size:
-        i. Compress block if compression is enabled.
-        ii. Write block header + body to SSTable file.
-        iii. If block is sampled, add to sparse index.
-        iv. Reset block buffer.
+     b. Check if record fits in current block (block_size + record.size_on_disk() <= target_size).
+     c. If record does NOT fit:
+        i. Close current block: compress if enabled, write block header + body to file.
+        ii. Track first key of closed block for sparse index.
+        iii. Start new block.
+     d. Append record to current block buffer.
   3. Flush remaining block (if any).
-  4. Rebuild sparse index and Bloom filter.
+  4. Rebuild sparse index and Bloom filter by scanning all blocks in the SSTable file.
   5. Return SSTable.
 ```
+
+**Key point**: Records never span blocks. If a record doesn't fit in the current block, the block is closed and the record is placed entirely in the next block.
 
 ### Reading (SSTable → Records)
 
@@ -242,6 +243,26 @@ iter():
   2. For each block: read header, decompress (if needed), iterate records.
   3. Yield records in order.
 ```
+
+### Compaction (Merge SSTables)
+
+Compaction merges multiple SSTables into a single new SSTable. With blocks, the flow is:
+
+```
+compact(sst_list):
+  1. Open all SSTables and create block iterators.
+  2. Merge-sort all blocks by key (LSM standard pattern).
+  3. Use a block writer (as in from_memtable) to write results.
+  4. For each merged record:
+     a. Serialize as Record.
+     b. Append to current block buffer (following the from_memtable logic).
+     c. If block overflows, close block, write header + body, start new block.
+  5. Flush remaining block.
+  6. Rebuild sparse index and Bloom filter.
+  7. Delete old SSTable files.
+```
+
+**Key insight**: Compaction doesn't "know" about blocks—it works at the record level. The block writer encapsulates block management and compression.
 
 ## File Format Examples
 
