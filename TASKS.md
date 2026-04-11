@@ -74,6 +74,10 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
+## #62 — Block-based segment format with compression for KV engine (DDIA Ch. 3)
+
+Apply the block-based compression format (from #29) to the KV engine's append-only segments. Partition segments into fixed-size blocks with optional LZ77 compression per block. Update the hash index rebuild to work with blocks. Enables compression benefits for the Bitcask-style engine and demonstrates that block layouts are engine-agnostic. Depends on #29 (block format, LZ77 codec).
+
 # Closed Tasks
 
 ## #61 — Engine-internal concurrency: write buffering and fine-grained locking
