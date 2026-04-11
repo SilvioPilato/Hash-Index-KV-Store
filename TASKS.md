@@ -86,6 +86,10 @@ Replace the varint-based LZ77 encoding (from #29) with control-byte encoding (De
 
 Extend the block-based SSTable format (from #29) with per-block integrity checks and format versioning. Add optional fields to the block header: (1) per-block CRC32 for early corruption detection, (2) block format version byte for forward/backward compatibility. This enables graceful format evolution without breaking existing SSTables. Depends on #29. Low priority—task #29 uses record-level CRC as the primary safety mechanism; this is an enhancement for production robustness.
 
+## #65 — Block compression optimization evaluation (low priority, research task)
+
+Comprehensive evaluation of optimization strategies for block-based compression (from #29). Implement and benchmark: (1) block-level decompression caching (LRU in-memory cache), (2) lazy decompression (only decompress blocks on key access), (3) parallel decompression for range scans (decompress multiple blocks concurrently), (4) SIMD optimization for LZ77 match-finding and copying, (5) prefetching for sequential reads. Measure latency, throughput, and memory overhead against baseline. Generate comparison report. Depends on #29. Low priority—exploratory task to understand real-world performance gains and tradeoffs.
+
 # Closed Tasks
 
 ## #61 — Engine-internal concurrency: write buffering and fine-grained locking
