@@ -82,6 +82,10 @@ Apply the block-based compression format (from #29) to the KV engine's append-on
 
 Replace the varint-based LZ77 encoding (from #29) with control-byte encoding (Deflate/zlib style). Each control byte represents 8 operations (literals or match references), reducing metadata overhead and improving compression ratio by ~5%. Depends on #29. Low priority—varint is "good enough" for most workloads; this is a performance/space optimization for production use.
 
+## #64 — Extend block header with integrity checks and versioning (low priority)
+
+Extend the block-based SSTable format (from #29) with per-block integrity checks and format versioning. Add optional fields to the block header: (1) per-block CRC32 for early corruption detection, (2) block format version byte for forward/backward compatibility. This enables graceful format evolution without breaking existing SSTables. Depends on #29. Low priority—task #29 uses record-level CRC as the primary safety mechanism; this is an enhancement for production robustness.
+
 # Closed Tasks
 
 ## #61 — Engine-internal concurrency: write buffering and fine-grained locking
