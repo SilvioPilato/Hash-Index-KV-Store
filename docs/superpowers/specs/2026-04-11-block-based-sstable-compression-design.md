@@ -29,11 +29,10 @@ This specification describes a block-based SSTable format for the LSM engine tha
 Each block consists of:
 
 ```
-Block Header (16 bytes, big-endian):
+Block Header (9 bytes, big-endian):
   byte 0-3:   uncompressed_size (u32)   — size of data before compression
   byte 4-7:   compressed_size (u32)     — size of data after compression
   byte 8:     compression_flag (u8)     — 0 = uncompressed, 1 = LZ77-compressed
-  byte 9-15:  reserved (7 bytes)        — for future use (padding to 16 bytes)
 
 Block Body:
   If compression_flag == 0:
@@ -43,11 +42,11 @@ Block Body:
 ```
 
 **Rationale for header design**:
-- 16 bytes allows simple alignment and efficient I/O.
+- Minimal and tight: only essential fields.
 - `uncompressed_size` is needed during decompression (allocate buffer).
 - `compressed_size` is needed during read (know how many bytes to consume).
 - `compression_flag` allows mixed compression strategies (useful for future extensions).
-- Reserved bytes allow per-block checksums (e.g., CRC) in the future without breaking the format.
+- Future enhancements (per-block CRC, versioning) can be added as a separate task if needed.
 
 **Block Size Note**: The target block size (default 4 KB) is a target, not a hard limit. If a single record exceeds the block size, that record occupies its own block alone, which may exceed the target. This matches production databases (RocksDB, LevelDB) and is acceptable because large records are rare in practice and still benefit from compression.
 
