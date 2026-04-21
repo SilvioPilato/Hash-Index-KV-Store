@@ -17,6 +17,11 @@ pub enum StorageStrategy {
     Leveled,
 }
 
+pub enum BlockCompression {
+    None,
+    Lz77,
+}
+
 #[derive(Copy, Clone)]
 pub enum EngineType {
     KV,
@@ -36,6 +41,8 @@ pub struct Settings {
     pub leveled_num_levels: usize,
     pub leveled_l0_threshold: usize,
     pub leveled_l1_max_bytes: u64,
+    pub block_size_kb: u64,
+    pub block_compression: BlockCompression,
 }
 
 impl Settings {
@@ -62,6 +69,8 @@ impl Settings {
             leveled_num_levels: 4,
             leveled_l0_threshold: 4,
             leveled_l1_max_bytes: 10 * 1024 * 1024,
+            block_size_kb: 4,
+            block_compression: BlockCompression::Lz77,
         };
         while let Some(arg) = args_iter.next() {
             match arg.as_str() {
@@ -132,6 +141,21 @@ impl Settings {
                             .expect("Invalid leveled L1 max bytes provided");
                     }
                 }
+                "-bsk" | "--block-size-kb" => {
+                    if let Some(value) = args_iter.next() {
+                        let kb: u64 = value.parse().expect("Invalid block size kb provided");
+                        if !(1..=1024).contains(&kb) {
+                            panic!("Block size must be between 1 and 1024 KB, got: {}", kb);
+                        }
+                        settings.block_size_kb = kb;
+                    }
+                }
+                "-bc" | "--block-compression" => {
+                    if let Some(value) = args_iter.next() {
+                        settings.block_compression =
+                            Settings::parse_block_compression(value).unwrap()
+                    }
+                }
                 _ => println!("Unknown argument: {}", arg),
             }
         }
@@ -170,6 +194,12 @@ impl Settings {
         println!("                         L0 file count before compaction (default: 4)");
         println!("  -ll1, --leveled-l1-max-bytes <BYTES>");
         println!("                         L1 max size in bytes (default: 10485760)");
+        println!("  -bsk, --block-size-kb <KB>");
+        println!(
+            "                         Block size in KB for SSTable blocks (default: 4, range: 1-1024)"
+        );
+        println!("  -bc, --block-compression <COMPRESSION>");
+        println!("                         Block compression: 'none' or 'lz77' (default: lz77)");
         println!("  -h, --help             Print this help message");
     }
     fn parse_fsync(s: &str) -> Result<FSyncStrategy, String> {
@@ -215,6 +245,14 @@ impl Settings {
             "leveled" => Ok(StorageStrategy::Leveled),
             "size-tiered" => Ok(StorageStrategy::SizeTiered),
             _ => Err(format!("Unsupported storage strategy provided: {s}")),
+        }
+    }
+
+    fn parse_block_compression(s: &str) -> Result<BlockCompression, String> {
+        match s {
+            "none" => Ok(BlockCompression::None),
+            "lz77" => Ok(BlockCompression::Lz77),
+            _ => Err(format!("Unsupported block compression provided: {s}")),
         }
     }
 }
