@@ -2,9 +2,38 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Progress (last updated 2026-04-24)
+
+- [x] **Task 1** — Module setup and CLI flags (committed on main)
+- [x] **Task 2** — LZ77 codec implemented and tested (committed on main)
+- [x] **Task 3** — Block I/O (`BlockHeader`, `BlockWriter`, `BlockReader`) — all 8 tests pass, clippy clean
+- [x] **Task 4** — SSTable rewrite to use blocks — all methods updated, all tests pass
+- [x] **Task 5** — Integration tests — 6 LSM-level tests in `tests/block_sstable.rs`
+- [x] **Task 6** — Pre-commit checklist and final validation — fmt + clippy clean, 235/235 tests pass
+
+### Post-plan fixes (discovered during Task 5)
+
+- **SSTableIter infinite loop on CRC error** — the original `next()` returned `Some(Err(e))` without advancing `block_pos`, causing `collect()` callers (including the `iter_propagates_crc_error` test) to grow their result `Vec` forever. Observed at ~20 GB RAM before killing the process. Fixed by making `SSTableIter` a fused iterator: added a `done: bool` field, set on every terminal path (record parse error, block read error, I/O error, clean EOF), returned as `None`/`Err` once and `None` thereafter. Only the "EOF inside record parse" path is non-terminal (signals end of current decompressed block).
+- **Settings wiring** — plumbed `block_size_bytes: usize` and `block_compression_enabled: bool` from `Settings` through `LsmShared` and both `SizeTiered` / `Leveled` strategies so `--block-size-kb` and `--block-compression` actually affect behavior. `main.rs` computes the values once and passes them to the three constructors.
+
+### Implementation notes (deviations from original plan)
+
+- `Lz77Encoder` renamed to `Lz77` (unit struct with associated functions). Call as `Lz77::encode(data)` / `Lz77::decode(data)`.
+- Used **hash-chain match finding** (not brute-force): `get_hash_chain()` builds a `HashMap<[u8;3], usize>` + `Vec<Option<usize>>` chain over all positions upfront.
+- `decode` returns `Vec<u8>` (panics on corruption), not `io::Result<Vec<u8>>`.
+- 14 tests in `tests/lz77.rs`, all passing.
+- `src/settings.rs` has `block_size_kb: u64` (not `usize`) and `block_compression: BlockCompression` enum (`None`/`Lz77`).
+- `BlockHeader` uses `stored_size` (not `compressed_size` as the plan specified).
+- `SSTableIter` modified in place (not a new struct) — added `current_block: Vec<u8>`, `block_pos: usize`, and `done: bool` fields; `next()` drains the buffered block then fetches the next one.
+- `Record::to_be_bytes()` extracted from `append()` and used by `BlockWriter::add_record()`; single-allocation implementation (CRC computed in-place).
+- CRC corruption tests in `tests/sstable.rs` updated to use `compression_enabled: false` and offset 30 (9-byte block header + 21-byte record header) instead of offset 21.
+
+---
+
 **Goal:** Implement block-based SSTable format with varint-based LZ77 compression for the LSM engine, replacing the current record-by-record format.
 
-**Architecture:** 
+**Architecture:**
+
 - New `lz77` module: varint-based LZ77 encoder/decoder (sliding window, match-finding)
 - New `block` module: block writer (fills blocks, compresses) and block reader (decompresses, iterates)
 - Refactor `sstable.rs`: rewrite `from_memtable()`, `rebuild_index()`, `get()`, `iter()` to work with blocks
@@ -19,12 +48,14 @@
 ## File Structure
 
 **New files:**
+
 - `src/lz77.rs` - LZ77 encoder/decoder (sliding window, match-finding, varint encoding)
 - `src/block.rs` - BlockWriter (buffers records, manages block boundaries, compresses) and BlockReader (decompresses, iterates records)
 - `tests/lz77.rs` - LZ77 codec tests (roundtrip, various data patterns)
 - `tests/block_sstable.rs` - Block I/O tests (read/write, spanning, mixed compression)
 
 **Modified files:**
+
 - `src/sstable.rs` - Rewrite SSTable to use block format (from_memtable, rebuild_index, get, iter)
 - `src/settings.rs` - Add `block_size_kb`, `block_compression` CLI flags
 - `src/lsmengine.rs` - Minor: ensure compaction works with new SSTable format (should be transparent)
@@ -36,6 +67,7 @@
 ### Task 1: Set up new modules and CLI flags
 
 **Files:**
+
 - Create: `src/lz77.rs` (skeleton)
 - Create: `src/block.rs` (skeleton)
 - Modify: `src/settings.rs`
