@@ -2,6 +2,10 @@
 
 # Open Tasks
 
+## #62 — Versioned snapshots for KVEngine (RocksDB-style)
+
+Replace the `RwLock<HashIndex>` in KVEngine with `RwLock<Arc<Version>>` where `Version` holds the index + segment list. Readers clone the Arc and release the lock before file I/O, eliminating the concurrent throughput regression from #61. Old segments stay alive until the last reader drops its Arc. Compaction waits for in-flight readers before deleting old files.
+
 ## #26 — Persist Bloom filters and sparse index to disk (DDIA Ch. 3)
 
 Bloom filters and sparse indexes are currently rebuilt by scanning every SSTable file on startup. Serialize them to sidecar files (similar to hint files for Bitcask) so that LSM startup skips the full-file scan. Natural companion to the existing hint file infrastructure.
