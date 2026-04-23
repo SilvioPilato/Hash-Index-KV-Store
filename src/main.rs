@@ -4,7 +4,7 @@ use rustikv::kvengine::KVEngine;
 use rustikv::leveled::Leveled;
 use rustikv::lsmengine::LsmEngine;
 use rustikv::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
-use rustikv::settings::{EngineType, Settings, StorageStrategy};
+use rustikv::settings::{BlockCompression, EngineType, Settings, StorageStrategy};
 use rustikv::size_tiered::SizeTiered;
 use rustikv::stats::Stats;
 use std::env;
@@ -46,22 +46,27 @@ fn main() -> io::Result<()> {
             )?),
         },
         EngineType::Lsm => {
+            let block_size_bytes = (settings.block_size_kb * 1024) as usize;
+            let block_compression_enabled =
+                matches!(settings.block_compression, BlockCompression::Lz77);
             let strategy: Box<dyn rustikv::storage_strategy::StorageStrategy> =
                 match settings.storage_strategy {
-                    StorageStrategy::SizeTiered => {
-                        Box::new(SizeTiered::load_from_dir(
-                            &settings.db_file_path,
-                            &settings.db_name,
-                            4,  // min_threshold
-                            32, // max_threshold
-                        )?)
-                    }
+                    StorageStrategy::SizeTiered => Box::new(SizeTiered::load_from_dir(
+                        &settings.db_file_path,
+                        &settings.db_name,
+                        4,  // min_threshold
+                        32, // max_threshold
+                        block_size_bytes,
+                        block_compression_enabled,
+                    )?),
                     StorageStrategy::Leveled => Box::new(Leveled::load_from_dir(
                         &settings.db_file_path,
                         &settings.db_name,
                         settings.leveled_num_levels,
                         settings.leveled_l0_threshold,
                         settings.leveled_l1_max_bytes,
+                        block_size_bytes,
+                        block_compression_enabled,
                     )?),
                 };
 
@@ -70,6 +75,8 @@ fn main() -> io::Result<()> {
                 &settings.db_name,
                 settings.max_segment_bytes as usize,
                 strategy,
+                block_size_bytes,
+                block_compression_enabled,
             )?)
         }
     };

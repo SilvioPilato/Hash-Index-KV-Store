@@ -73,7 +73,13 @@ impl Level {
         self.sstables.iter().rev()
     }
 
-    pub fn squash(&mut self, db_path: &str, db_name: &str) -> io::Result<Option<SSTable>> {
+    pub fn squash(
+        &mut self,
+        db_path: &str,
+        db_name: &str,
+        block_size_bytes: usize,
+        block_compression_enabled: bool,
+    ) -> io::Result<Option<SSTable>> {
         if self.sstables.is_empty() {
             return Ok(None);
         }
@@ -101,16 +107,26 @@ impl Level {
             db_name,
             &memtable,
             Some(self.level_num),
+            block_size_bytes,
+            block_compression_enabled,
         )?))
     }
 }
 
 pub struct Leveled {
     levels: Vec<Level>,
+    block_size_bytes: usize,
+    block_compression_enabled: bool,
 }
 
 impl Leveled {
-    pub fn new(num_levels: usize, l0_threshold: usize, l1_max_bytes: u64) -> Self {
+    pub fn new(
+        num_levels: usize,
+        l0_threshold: usize,
+        l1_max_bytes: u64,
+        block_size_bytes: usize,
+        block_compression_enabled: bool,
+    ) -> Self {
         let mut levels = Vec::with_capacity(num_levels);
         for i in 0..num_levels {
             levels.push(Level {
@@ -121,7 +137,11 @@ impl Leveled {
                 is_terminal: i == num_levels - 1,
             });
         }
-        Leveled { levels }
+        Leveled {
+            levels,
+            block_size_bytes,
+            block_compression_enabled,
+        }
     }
 
     pub fn load_from_dir(
@@ -130,9 +150,17 @@ impl Leveled {
         num_levels: usize,
         l0_threshold: usize,
         l1_max_bytes: u64,
+        block_size_bytes: usize,
+        block_compression_enabled: bool,
     ) -> io::Result<Self> {
         let sstables = get_sstables(db_path, db_name)?;
-        let mut strategy = Self::new(num_levels, l0_threshold, l1_max_bytes);
+        let mut strategy = Self::new(
+            num_levels,
+            l0_threshold,
+            l1_max_bytes,
+            block_size_bytes,
+            block_compression_enabled,
+        );
         for mut sst in sstables {
             sst.rebuild_index()?;
             let level = sst.level.unwrap_or(0);
@@ -216,8 +244,14 @@ impl Leveled {
                     }
                 }
 
-                let sstable =
-                    SSTable::from_memtable(db_path, db_name, &memtable, Some(target.level_num))?;
+                let sstable = SSTable::from_memtable(
+                    db_path,
+                    db_name,
+                    &memtable,
+                    Some(target.level_num),
+                    self.block_size_bytes,
+                    self.block_compression_enabled,
+                )?;
                 target
                     .sstables
                     .retain(|sst| !overlap_paths.contains(&sst.path));
@@ -252,7 +286,12 @@ impl StorageStrategy for Leveled {
         for i in 0..self.levels.len() {
             if self.levels[i].needs_compaction()? {
                 if self.levels[i].is_terminal {
-                    if let Some(sst) = self.levels[i].squash(db_path, db_name)? {
+                    if let Some(sst) = self.levels[i].squash(
+                        db_path,
+                        db_name,
+                        self.block_size_bytes,
+                        self.block_compression_enabled,
+                    )? {
                         self.levels[i].append(sst);
                     }
                 } else {
@@ -268,7 +307,12 @@ impl StorageStrategy for Leveled {
     fn compact_all(&mut self, db_path: &str, db_name: &str) -> io::Result<()> {
         for i in 0..self.levels.len() {
             if self.levels[i].is_terminal {
-                if let Some(sst) = self.levels[i].squash(db_path, db_name)? {
+                if let Some(sst) = self.levels[i].squash(
+                    db_path,
+                    db_name,
+                    self.block_size_bytes,
+                    self.block_compression_enabled,
+                )? {
                     self.levels[i].append(sst);
                 }
             } else {

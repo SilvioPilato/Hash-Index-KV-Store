@@ -27,8 +27,8 @@ fn new_kv(dir: &str, max_seg: u64) -> KVEngine {
 }
 
 fn new_lsm(dir: &str, max_memtable: usize) -> LsmEngine {
-    let strategy = Box::new(SizeTiered::new(4, 32));
-    LsmEngine::new(dir, "test", max_memtable, strategy).unwrap()
+    let strategy = Box::new(SizeTiered::new(4, 32, 4096, true));
+    LsmEngine::new(dir, "test", max_memtable, strategy, 4096, true).unwrap()
 }
 
 // ---------------------------------------------------------------------------

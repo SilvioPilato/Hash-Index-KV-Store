@@ -3,14 +3,14 @@ use std::collections::HashMap;
 const SEARCH_WINDOW: usize = 32_768;
 const LOOKAHEAD_WINDOW: usize = 258;
 const MAX_CHAIN: usize = 128;
-pub struct Lz77Encoder;
+pub struct Lz77;
 
 struct Match {
     offset: usize,
     len: usize,
 }
 
-impl Lz77Encoder {
+impl Lz77 {
     pub fn encode(data: &[u8]) -> Vec<u8> {
         let mut output = Vec::new();
         let (table, chain) = Self::get_hash_chain(data);

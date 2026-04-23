@@ -27,6 +27,8 @@ struct LsmShared {
     max_memtable_bytes: AtomicUsize,
     wal: Mutex<Wal>,
     storage_strategy: RwLock<Box<dyn StorageStrategy>>,
+    block_size_bytes: usize,
+    block_compression_enabled: bool,
 }
 
 pub struct LsmEngine {
@@ -39,6 +41,8 @@ impl LsmEngine {
         db_name: &str,
         max_memtable_bytes: usize,
         storage_strategy: Box<dyn StorageStrategy>,
+        block_size_bytes: usize,
+        block_compression_enabled: bool,
     ) -> io::Result<LsmEngine> {
         let wal = Wal::open(&PathBuf::from(db_path), db_name.to_string())?;
         Ok(LsmEngine {
@@ -51,6 +55,8 @@ impl LsmEngine {
                 max_memtable_bytes: AtomicUsize::from(max_memtable_bytes),
                 wal: Mutex::new(wal),
                 storage_strategy: RwLock::new(storage_strategy),
+                block_size_bytes,
+                block_compression_enabled,
             }),
         })
     }
@@ -60,6 +66,8 @@ impl LsmEngine {
         db_name: &str,
         max_memtable_bytes: usize,
         storage_strategy: Box<dyn StorageStrategy>,
+        block_size_bytes: usize,
+        block_compression_enabled: bool,
     ) -> io::Result<Self> {
         let wal = Wal::open(&PathBuf::from(dir), db_name.to_string())?;
         let memtable = wal.replay()?;
@@ -73,6 +81,8 @@ impl LsmEngine {
                 max_memtable_bytes: AtomicUsize::from(max_memtable_bytes),
                 wal: Mutex::new(wal),
                 storage_strategy: RwLock::new(storage_strategy),
+                block_size_bytes,
+                block_compression_enabled,
             }),
         })
     }
@@ -104,12 +114,18 @@ impl LsmEngine {
             {
                 let immutable = shared.immutable.read().unwrap();
                 if let Some(ref memtable) = *immutable {
-                    let sstable =
-                        SSTable::from_memtable(&shared.db_path, &shared.db_name, memtable, None)
-                            .unwrap_or_else(|e| {
-                                eprintln!("flush_memtable_async: SSTable write failed: {}", e);
-                                panic!("flush_memtable_async: SSTable write failed");
-                            });
+                    let sstable = SSTable::from_memtable(
+                        &shared.db_path,
+                        &shared.db_name,
+                        memtable,
+                        None,
+                        shared.block_size_bytes,
+                        shared.block_compression_enabled,
+                    )
+                    .unwrap_or_else(|e| {
+                        eprintln!("flush_memtable_async: SSTable write failed: {}", e);
+                        panic!("flush_memtable_async: SSTable write failed");
+                    });
                     drop(immutable);
                     let mut storage_strategy = shared.storage_strategy.write().unwrap();
                     storage_strategy.add_sstable(sstable).unwrap_or_else(|e| {
@@ -237,6 +253,8 @@ impl StorageEngine for LsmEngine {
                     &self.shared.db_name,
                     memtable,
                     None,
+                    self.shared.block_size_bytes,
+                    self.shared.block_compression_enabled,
                 )?;
                 drop(immutable);
                 storage_strategy.add_sstable(sstable)?;

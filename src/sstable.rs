@@ -1,11 +1,12 @@
 use std::{
     fs::{File, OpenOptions, read_dir},
-    io::{self, BufReader, ErrorKind, Seek},
+    io::{self, BufReader, ErrorKind, Read, Seek, Write},
     path::PathBuf,
     time::SystemTime,
 };
 
 use crate::{
+    block::{BlockHeader, BlockReader, BlockWriter},
     bloom::BloomFilter,
     memtable::Memtable,
     record::{Record, RecordHeader},
@@ -28,16 +29,60 @@ pub struct SSTable {
 
 pub struct SSTableIter {
     file: BufReader<File>,
+    current_block: Vec<u8>,
+    block_pos: usize,
+    done: bool,
 }
 
 impl Iterator for SSTableIter {
     type Item = io::Result<Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match Record::read_next(&mut self.file) {
-            Ok(record) => Some(Ok(record)),
-            Err(e) if e.kind() == ErrorKind::UnexpectedEof => None,
-            Err(e) => Some(Err(e)),
+        if self.done {
+            return None;
+        }
+        loop {
+            if self.block_pos < self.current_block.len() {
+                let mut slice = &self.current_block[self.block_pos..];
+                let before = slice.len();
+                match Record::read_next(&mut slice) {
+                    Ok(record) => {
+                        self.block_pos += before - slice.len();
+                        return Some(Ok(record));
+                    }
+                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                        self.block_pos = self.current_block.len();
+                    }
+                    Err(e) => {
+                        self.done = true;
+                        return Some(Err(e));
+                    }
+                }
+            }
+
+            let mut header_bytes = [0u8; 9];
+            match self.file.read_exact(&mut header_bytes) {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                    self.done = true;
+                    return None;
+                }
+                Err(e) => {
+                    self.done = true;
+                    return Some(Err(e));
+                }
+            }
+            let header = BlockHeader::from_bytes(&header_bytes);
+            match BlockReader::read_block(&mut self.file, &header) {
+                Ok(data) => {
+                    self.current_block = data;
+                    self.block_pos = 0;
+                }
+                Err(e) => {
+                    self.done = true;
+                    return Some(Err(e));
+                }
+            }
         }
     }
 }
@@ -49,6 +94,8 @@ impl SSTable {
         name: &str,
         memtable: &Memtable,
         level: Option<usize>,
+        target_block_size: usize,
+        compression_enabled: bool,
     ) -> io::Result<SSTable> {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -68,13 +115,20 @@ impl SSTable {
         let key_count = memtable.entries().len();
         let bloom_bytes = (key_count * BLOOM_BITS_PER_KEY).div_ceil(8);
         let mut bloom = BloomFilter::new(bloom_bytes.max(1), BLOOM_HASH_COUNT);
-        let mut last: Option<(String, u64)> = None;
+        let mut last_key: Option<String> = None;
+        let mut block_writer = BlockWriter::new(target_block_size, compression_enabled);
+        let mut block_count = 0;
+        let mut file_offset = 0u64;
+        let mut first_key_in_block = None;
 
-        for (i, (key, opt)) in memtable.entries().iter().enumerate() {
+        for (key, opt) in memtable.entries().iter() {
             let (value, tombstone) = match opt {
                 Some(v) => (v.to_string(), false),
                 None => (String::new(), true),
             };
+            if first_key_in_block.is_none() {
+                first_key_in_block = Some(key.clone());
+            }
             let record = Record {
                 header: RecordHeader {
                     crc32: 0u32,
@@ -86,15 +140,33 @@ impl SSTable {
                 value,
             };
 
-            let offset = record.append(&mut file)?;
-            if i % SPARSE_INDEX_INTERVAL == 0 {
-                sparse_index.push((key.to_owned(), offset));
-            }
             bloom.insert(key);
-            last = Some((key.clone(), offset));
+            last_key = Some(key.clone());
+            if let Some(block_bytes) = block_writer.add_record(&record)? {
+                if block_count % SPARSE_INDEX_INTERVAL == 0 {
+                    sparse_index.push((first_key_in_block.take().unwrap(), file_offset));
+                }
+                file.write_all(&block_bytes)?;
+                file_offset += block_bytes.len() as u64;
+                block_count += 1;
+                first_key_in_block = Some(key.clone());
+            }
+        }
+
+        if let Some(block_bytes) = block_writer.flush()? {
+            if block_count % SPARSE_INDEX_INTERVAL == 0
+                && let Some(ref key) = first_key_in_block
+            {
+                sparse_index.push((key.to_owned(), file_offset));
+            }
+            file.write_all(&block_bytes)?;
         }
         let min = sparse_index.first().cloned();
-        let max = last;
+        let max = last_key.map(|k| {
+            let pos = sparse_index.partition_point(|(sk, _)| sk.as_str() <= k.as_str());
+            let offset = if pos > 0 { sparse_index[pos - 1].1 } else { 0 };
+            (k, offset)
+        });
         Ok(SSTable {
             path,
             timestamp,
@@ -118,7 +190,12 @@ impl SSTable {
         let mut reader = BufReader::new(file);
         reader.seek(io::SeekFrom::Start(offset))?;
 
-        let iter = SSTableIter { file: reader };
+        let iter = SSTableIter {
+            block_pos: 0,
+            file: reader,
+            current_block: Vec::new(),
+            done: false,
+        };
 
         for result in iter {
             let record = result?;
@@ -143,6 +220,9 @@ impl SSTable {
         let file = OpenOptions::new().read(true).open(&self.path)?;
         Ok(SSTableIter {
             file: BufReader::new(file),
+            block_pos: 0,
+            current_block: Vec::new(),
+            done: false,
         })
     }
 
@@ -183,20 +263,41 @@ impl SSTable {
         let mut reader = BufReader::new(file);
         let mut sparse_index: Vec<(String, u64)> = Vec::new();
         let mut keys: Vec<String> = Vec::new();
-        let mut i = 0usize;
+        let mut block_count = 0;
         loop {
-            let offset = reader.stream_position()?;
-            match Record::read_next(&mut reader) {
-                Ok(record) => {
-                    if i.is_multiple_of(SPARSE_INDEX_INTERVAL) {
-                        sparse_index.push((record.key.clone(), offset));
-                    }
-                    keys.push(record.key);
-                    i += 1;
-                }
+            let block_offset = reader.stream_position()?;
+
+            let mut header_buf = [0u8; 9];
+            match reader.read_exact(&mut header_buf) {
+                Ok(_) => {}
                 Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
                 Err(e) => return Err(e),
             }
+
+            let header = BlockHeader::from_bytes(&header_buf);
+            let block_data = BlockReader::read_block(&mut reader, &header)?;
+            let mut slice = block_data.as_slice();
+            let mut first_key: Option<String> = None;
+
+            loop {
+                match Record::read_next(&mut slice) {
+                    Ok(record) => {
+                        if first_key.is_none() {
+                            first_key = Some(record.key.clone());
+                        }
+                        keys.push(record.key);
+                    }
+                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
+                    Err(e) => return Err(e),
+                }
+            }
+
+            if block_count % SPARSE_INDEX_INTERVAL == 0
+                && let Some(k) = first_key
+            {
+                sparse_index.push((k, block_offset));
+            }
+            block_count += 1;
         }
         let bloom_bytes = (keys.len() * BLOOM_BITS_PER_KEY).div_ceil(8);
         let mut bloom = BloomFilter::new(bloom_bytes.max(1), BLOOM_HASH_COUNT);
