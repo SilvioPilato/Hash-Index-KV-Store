@@ -17,8 +17,8 @@ fn temp_dir(suffix: &str) -> String {
 }
 
 fn new_engine(dir: &str, db_name: &str, max_memtable_bytes: usize) -> std::io::Result<LsmEngine> {
-    let strategy = Box::new(SizeTiered::new(4, 32)); // min_threshold=4, max_threshold=32
-    LsmEngine::new(dir, db_name, max_memtable_bytes, strategy)
+    let strategy = Box::new(SizeTiered::new(4, 32, 4096, true));
+    LsmEngine::new(dir, db_name, max_memtable_bytes, strategy, 4096, true)
 }
 
 fn engine_from_dir(
@@ -26,8 +26,8 @@ fn engine_from_dir(
     db_name: &str,
     max_memtable_bytes: usize,
 ) -> std::io::Result<LsmEngine> {
-    let strategy = Box::new(SizeTiered::load_from_dir(dir, db_name, 4, 32)?);
-    LsmEngine::from_dir(dir, db_name, max_memtable_bytes, strategy)
+    let strategy = Box::new(SizeTiered::load_from_dir(dir, db_name, 4, 32, 4096, true)?);
+    LsmEngine::from_dir(dir, db_name, max_memtable_bytes, strategy, 4096, true)
 }
 
 const BIG_MEMTABLE: usize = 1_048_576; // 1 MB — won't auto-flush

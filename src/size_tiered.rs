@@ -15,14 +15,23 @@ pub struct SizeTiered {
     sstables: Vec<Vec<SSTable>>,
     min_threshold: usize,
     max_threshold: usize,
+    block_size_bytes: usize,
+    block_compression_enabled: bool,
 }
 
 impl SizeTiered {
-    pub fn new(min_threshold: usize, max_threshold: usize) -> Self {
+    pub fn new(
+        min_threshold: usize,
+        max_threshold: usize,
+        block_size_bytes: usize,
+        block_compression_enabled: bool,
+    ) -> Self {
         SizeTiered {
             sstables: Vec::new(),
             min_threshold,
             max_threshold,
+            block_size_bytes,
+            block_compression_enabled,
         }
     }
 
@@ -31,9 +40,16 @@ impl SizeTiered {
         db_name: &str,
         min_threshold: usize,
         max_threshold: usize,
+        block_size_bytes: usize,
+        block_compression_enabled: bool,
     ) -> io::Result<Self> {
         let sstables = get_sstables(db_path, db_name)?;
-        let mut strategy = Self::new(min_threshold, max_threshold);
+        let mut strategy = Self::new(
+            min_threshold,
+            max_threshold,
+            block_size_bytes,
+            block_compression_enabled,
+        );
         for mut sst in sstables {
             sst.rebuild_index()?;
             strategy.add_sstable(sst)?;
@@ -106,7 +122,14 @@ impl StorageStrategy for SizeTiered {
 
             memtable.drop_tombstones();
 
-            let new_sst = SSTable::from_memtable(db_path, db_name, &memtable, None)?;
+            let new_sst = SSTable::from_memtable(
+                db_path,
+                db_name,
+                &memtable,
+                None,
+                self.block_size_bytes,
+                self.block_compression_enabled,
+            )?;
             *bucket = vec![new_sst];
             return Ok(true);
         }
@@ -134,7 +157,12 @@ impl StorageStrategy for SizeTiered {
         memtable.drop_tombstones();
 
         self.sstables = vec![vec![SSTable::from_memtable(
-            db_path, db_name, &memtable, None,
+            db_path,
+            db_name,
+            &memtable,
+            None,
+            self.block_size_bytes,
+            self.block_compression_enabled,
         )?]];
         Ok(())
     }

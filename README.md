@@ -5,7 +5,7 @@
 This project implements a simple key-value store that communicates over TCP, built while reading *Designing Data-Intensive Applications*. It supports two storage engines selectable at startup:
 
 - **KV (Bitcask)** — hash index in memory, append-only segment files, hint files for fast startup.
-- **LSM** — in-memory memtable (BTreeMap) flushed to sorted string table (SSTable) segments, with sparse index and Bloom filter per segment. Supports two pluggable compaction strategies:
+- **LSM** — in-memory memtable (BTreeMap) flushed to sorted string table (SSTable) segments, with sparse index and Bloom filter per segment. SSTables are written as fixed-size blocks (default 4 KB) with optional per-block LZ77 compression (`--block-size-kb`, `--block-compression`). Supports two pluggable compaction strategies:
   - **Size-tiered** (default) — groups similarly-sized SSTables into buckets and compacts when a bucket reaches a threshold. Good write throughput.
   - **Leveled** — LevelDB-style level-based compaction. L0 triggers on file count; L1+ trigger on byte budget (10× per level). Better read performance and space amplification.
 

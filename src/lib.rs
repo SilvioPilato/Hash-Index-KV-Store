@@ -1,4 +1,5 @@
 pub mod bffp;
+pub mod block;
 pub mod bloom;
 pub mod cli;
 pub mod crc;
@@ -8,6 +9,7 @@ pub mod hint;
 pub mod kvengine;
 pub mod leveled;
 pub mod lsmengine;
+pub mod lz77;
 pub mod memtable;
 pub mod record;
 pub mod segment;

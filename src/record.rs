@@ -62,24 +62,7 @@ impl Record {
     /// over the payload. Returns the byte offset where the record starts.
     pub fn append(&self, file: &mut File) -> io::Result<u64> {
         let current_eof_offset = file.seek(SeekFrom::End(0))?;
-        let mut buf = Vec::with_capacity(
-            RECORD_HEADER_LEN + self.header.key_size as usize + self.header.value_size as usize,
-        );
-        let mut payload = Vec::with_capacity(
-            RECORD_HEADER_LEN - CRC_LEN
-                + self.header.key_size as usize
-                + self.header.value_size as usize,
-        );
-        payload.extend_from_slice(&self.header.key_size.to_be_bytes());
-        payload.extend_from_slice(&self.header.value_size.to_be_bytes());
-        payload.extend_from_slice(&[self.header.tombstone as u8]);
-        payload.extend_from_slice(self.key.as_bytes());
-        payload.extend_from_slice(self.value.as_bytes());
-
-        buf.extend_from_slice(&crc32(&payload).to_be_bytes());
-        buf.extend_from_slice(&payload);
-
-        file.write_all(&buf)?;
+        file.write_all(&self.to_be_bytes())?;
         Ok(current_eof_offset)
     }
 
@@ -147,5 +130,21 @@ impl Record {
             key: String::from_utf8(k_buf).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
             value: String::from_utf8(v_buf).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
         })
+    }
+
+    pub fn to_be_bytes(&self) -> Vec<u8> {
+        let total =
+            RECORD_HEADER_LEN + self.header.key_size as usize + self.header.value_size as usize;
+        let mut buf = Vec::with_capacity(total);
+        buf.extend_from_slice(&[0u8; CRC_LEN]); // placeholder for CRC
+        let payload_start = CRC_LEN;
+        buf.extend_from_slice(&self.header.key_size.to_be_bytes());
+        buf.extend_from_slice(&self.header.value_size.to_be_bytes());
+        buf.extend_from_slice(&[self.header.tombstone as u8]);
+        buf.extend_from_slice(self.key.as_bytes());
+        buf.extend_from_slice(self.value.as_bytes());
+        let checksum = crc32(&buf[payload_start..]);
+        buf[..CRC_LEN].copy_from_slice(&checksum.to_be_bytes());
+        buf
     }
 }

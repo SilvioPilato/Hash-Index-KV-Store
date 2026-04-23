@@ -14,10 +14,6 @@ Bloom filters and sparse indexes are currently rebuilt by scanning every SSTable
 
 Memory-map SSTable files so lookups become pointer arithmetic instead of `read()` syscalls. Combined with the sparse index, this eliminates per-lookup I/O overhead. Good exercise in OS-level I/O and `unsafe` Rust, with platform-specific considerations (Windows vs. Unix).
 
-## #29 — Block-based SSTable format with compression (DDIA Ch. 3)
-
-Partition SSTables into fixed-size blocks (e.g., 4 KB) with per-block compression (e.g., hand-rolled LZ77 or simple run-length encoding). Index points to block offsets instead of individual records. Teaches data layout optimization and compression fundamentals.
-
 ## #31 — Connection timeouts and limits
 
 Currently there is no read timeout and unbounded thread spawning per TCP connection. Add `SO_TIMEOUT` on sockets, a maximum connection limit, and graceful backpressure when the limit is reached. Addresses real operational concerns without changing the threading model.
@@ -78,13 +74,29 @@ Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTab
 
 Add a `SCAN <cursor> <count>` TCP command for stateless paginated key iteration. The cursor is an opaque offset into the sorted keyspace; the server returns up to `count` keys starting at that offset plus the next cursor (or `0` when iteration is complete). Both engines support it — LSM iterates the sorted keyspace naturally; KV sorts the hash index keys at query time. Teaches stateless pagination and the tradeoffs of offset-based vs. hash-based cursors. Depends on #30 (binary protocol).
 
+## #62 — Block-based segment format with compression for KV engine (DDIA Ch. 3)
+
+Apply the block-based compression format (from #29) to the KV engine's append-only segments. Partition segments into fixed-size blocks with optional LZ77 compression per block. Update the hash index rebuild to work with blocks. Enables compression benefits for the Bitcask-style engine and demonstrates that block layouts are engine-agnostic. Depends on #29 (block format, LZ77 codec).
+
+## #63 — Upgrade LZ77 to control-byte encoding (compression optimization, low priority)
+
+Replace the varint-based LZ77 encoding (from #29) with control-byte encoding (Deflate/zlib style). Each control byte represents 8 operations (literals or match references), reducing metadata overhead and improving compression ratio by ~5%. Depends on #29. Low priority—varint is "good enough" for most workloads; this is a performance/space optimization for production use.
+
+## #64 — Extend block header with integrity checks and versioning (low priority)
+
+Extend the block-based SSTable format (from #29) with per-block integrity checks and format versioning. Add optional fields to the block header: (1) per-block CRC32 for early corruption detection, (2) block format version byte for forward/backward compatibility. This enables graceful format evolution without breaking existing SSTables. Depends on #29. Low priority—task #29 uses record-level CRC as the primary safety mechanism; this is an enhancement for production robustness.
+
+## #65 — Block compression optimization evaluation (low priority, research task)
+
+Comprehensive evaluation of optimization strategies for block-based compression (from #29). Implement and benchmark: (1) block-level decompression caching (LRU in-memory cache), (2) lazy decompression (only decompress blocks on key access), (3) parallel decompression for range scans (decompress multiple blocks concurrently), (4) SIMD optimization for LZ77 match-finding and copying, (5) prefetching for sequential reads. Measure latency, throughput, and memory overhead against baseline. Generate comparison report. Depends on #29. Low priority—exploratory task to understand real-world performance gains and tradeoffs.
+
 # Closed Tasks
 
-## #63 — Early index drop in KVEngine get()
+## #29 — Block-based SSTable format with compression (DDIA Ch. 3)
 
-Move `drop(index)` in `KVEngine::get()` right after `File::open`, before `seek`+`read`. Once the fd is open the file data survives segment deletion, so holding the read lock across I/O was unnecessary. Eliminates the large-payload regression from #61 and dramatically improves KV/always concurrent reads.
+Partitioned SSTables into blocks with optional per-block LZ77 compression. Added a hand-rolled LZ77 codec (`src/lz77.rs`) using varint-encoded literal/match tokens, a 32 KB sliding window, and hash-chain match finding capped by `MAX_CHAIN`. New `src/block.rs` defines a 9-byte `BlockHeader` (`uncompressed_size`, `stored_size`, `compression_flag`), a `BlockWriter` that buffers records up to a target size and flushes compressed blocks, and a `BlockReader` that decompresses on read. Rewrote `SSTable::from_memtable`, `get`, `iter`, and `rebuild_index` to work block-by-block; the sparse index now points to block offsets instead of record offsets. New CLI flags `--block-size-kb` (default 4, range 1–1024) and `--block-compression` (`none`|`lz77`, default `lz77`) plumbed through `Settings` → `LsmShared` → `SizeTiered`/`Leveled` strategies. Breaking change: old record-only SSTables are not readable. Also fixed a latent `SSTableIter` bug (infinite loop yielding `Err` forever on CRC mismatch — discovered mid-implementation when the test binary hit 20+ GB RAM); iterator is now a fused iterator via a `done` flag.
 
-PR: <https://github.com/SilvioPilato/rustikv/pull/36>
+PR: <https://github.com/SilvioPilato/rustikv/pull/37>
 
 ## #61 — Engine-internal concurrency: write buffering and fine-grained locking
 
