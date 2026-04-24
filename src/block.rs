@@ -16,7 +16,7 @@ impl BlockHeader {
         buf[0..4].copy_from_slice(&self.uncompressed_size.to_be_bytes());
         buf[4..8].copy_from_slice(&self.stored_size.to_be_bytes());
         buf[8] = self.compression_flag;
-        
+
         buf
     }
 

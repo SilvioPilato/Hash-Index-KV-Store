@@ -13,7 +13,8 @@ struct Match {
 impl Lz77 {
     pub fn encode(data: &[u8]) -> Vec<u8> {
         let mut output = Vec::new();
-        let (table, chain) = Self::get_hash_chain(data);
+        let mut table = HashMap::new();
+        let mut chain = vec![None; data.len()];
         let mut pos: usize = 0;
 
         while pos < data.len() {
@@ -22,11 +23,31 @@ impl Lz77 {
                     output.push(1);
                     Self::encode_varint(best_match.offset as u32, &mut output);
                     Self::encode_varint(best_match.len as u32, &mut output);
+
+                    // Insert all matched positions into the table
+                    for i in 0..best_match.len {
+                        if pos + i + 3 <= data.len() {
+                            let hash: [u8; 3] = data[pos + i..pos + i + 3].try_into().unwrap();
+                            if let Some(&old_pos) = table.get(&hash) {
+                                chain[pos + i] = Some(old_pos);
+                            }
+                            table.insert(hash, pos + i);
+                        }
+                    }
                     pos += best_match.len;
                 }
                 None => {
                     output.push(0);
                     output.push(data[pos]);
+
+                    // Insert position into table
+                    if pos + 3 <= data.len() {
+                        let hash: [u8; 3] = data[pos..pos + 3].try_into().unwrap();
+                        if let Some(&old_pos) = table.get(&hash) {
+                            chain[pos] = Some(old_pos);
+                        }
+                        table.insert(hash, pos);
+                    }
                     pos += 1;
                 }
             }
@@ -78,22 +99,6 @@ impl Lz77 {
         output
     }
 
-    fn get_hash_chain(data: &[u8]) -> (HashMap<[u8; 3], usize>, Vec<Option<usize>>) {
-        let mut table = HashMap::new();
-        let mut chain = vec![None; data.len()];
-
-        // Iterate all positions with at least 3 bytes remaining
-        for i in 0..data.len().saturating_sub(2) {
-            // Slice is guaranteed to be exactly 3 bytes
-            let hash: [u8; 3] = data[i..i + 3].try_into().unwrap();
-            if let Some(&offset) = table.get(&hash) {
-                chain[i] = Some(offset);
-            }
-            table.insert(hash, i);
-        }
-        (table, chain)
-    }
-
     fn find_longest_match(
         data: &[u8],
         pos: usize,
@@ -113,8 +118,13 @@ impl Lz77 {
         let mut candidate = *table.get(&key)?;
 
         loop {
+            if iteration >= MAX_CHAIN {
+                break;
+            }
+            iteration += 1;
+
             // Case 1: candidate is ahead of us (or at us) — skip, don't match
-            // This happens because the hash table stores the LAST occurrence
+            // With incremental chain building, this should not happen, but we guard against it
             if candidate >= pos {
                 match chain[candidate] {
                     Some(prev) => {
@@ -130,13 +140,7 @@ impl Lz77 {
                 break;
             }
 
-            // Case 3: we've followed too many chain links — stop searching
-            if iteration >= MAX_CHAIN {
-                break;
-            }
-
             // Happy path: candidate is valid, measure the match
-            iteration += 1;
             let len = data[candidate..]
                 .iter()
                 .zip(lookahead.iter())
