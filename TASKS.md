@@ -100,7 +100,7 @@ Fix: build the hash chain **incrementally during encoding** — insert `pos` onl
 
 Benchmark results confirm the fix: at 1 MB payload, write throughput went from 5 → 21 ops/sec (+320%) and on-disk size went from 1,048 MB → 8 MB (−99.2%). See `docs/benchmark-comparison-2026-04-24-lz77fix.md` and `docs/benchmark-lz77-2026-04-24.md`.
 
-PR: 
+PR: <https://github.com/SilvioPilato/rustikv/pull/38>
 
 ## #29 — Block-based SSTable format with compression (DDIA Ch. 3)
 
