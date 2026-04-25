@@ -20,5 +20,10 @@ path = "src/main.rs"
 name = "engbench"
 path = "src/bin/engbench.rs"
 
+[[bin]]
+name = "redis-compare"
+path = "src/bin/redis-compare.rs"
+
 [dependencies]
 sled = "0.34"
+redis = "0.27"
