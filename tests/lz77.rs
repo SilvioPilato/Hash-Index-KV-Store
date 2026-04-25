@@ -85,14 +85,12 @@ fn test_lz77_long_repetition() {
     assert_eq!(decompressed, original);
 }
 
+// Fixed in task #66: now uses incremental chain building, so compression works
+// on uniform input and the encoder is O(N*MAX_CHAIN) instead of O(N^2).
 #[test]
 fn test_lz77_compression_ratio() {
-    // Highly repetitive data should compress better
     let repetitive: Vec<u8> = (0..1000).map(|_| b'a').collect();
     let compressed = Lz77::encode(&repetitive);
-
-    // Compression should reduce size significantly for repetitive data
-    // (not requiring exact ratio, just that it's smaller than original)
     assert!(compressed.len() < repetitive.len());
 }
 
@@ -126,4 +124,23 @@ fn test_lz77_mixed_patterns() {
     let compressed = Lz77::encode(&original);
     let decompressed = Lz77::decode(&compressed);
     assert_eq!(decompressed, original);
+}
+
+#[test]
+fn test_lz77_encode_large_repetitive_is_bounded() {
+    // Regression test for the 1 MB LSM benchmark hang (2026-04-24).
+    // When every 3-byte window hashes identically (e.g. 'x' repeated), the
+    // "candidate >= pos" chain-skip branch in find_longest_match does not
+    // count against MAX_CHAIN, so it walks the entire history per position,
+    // making encode O(N^2) on uniform input. A correct implementation is
+    // O(N * MAX_CHAIN).
+    let data = vec![b'x'; 1_048_576];
+    let start = std::time::Instant::now();
+    let compressed = Lz77::encode(&data);
+    let elapsed = start.elapsed();
+    assert_eq!(Lz77::decode(&compressed), data);
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "encoding 1 MB of identical bytes took {elapsed:?} — expected < 3s (O(N*MAX_CHAIN)); O(N^2) indicates the chain-skip path is unbounded"
+    );
 }

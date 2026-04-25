@@ -1,0 +1,86 @@
+﻿# Raw Benchmark Runs — #66 LZ77 Fix (2026-04-24)
+# git 74443a9, kvbench port 6779
+
+## seq-nomiss-lsm-never
+disk=1390014
+WRITE: 37720 ops/sec (mean=26.5us, p99=88.2us)
+READ:  45950 ops/sec (mean=21.7us, p99=56.7us)
+
+## seq-nomiss-kv-never
+disk=2780014
+WRITE: 33864 ops/sec (mean=29.5us, p99=98.3us)
+READ:  19071 ops/sec (mean=52.4us, p99=154.4us)
+
+## seq-30miss-lsm-never
+disk=1390014
+WRITE: 37963 ops/sec (mean=26.3us, p99=97.8us)
+READ:  46047 ops/sec (mean=21.7us, p99=70.7us) [30% misses]
+
+## seq-30miss-kv-never
+disk=2780014
+WRITE: 33758 ops/sec (mean=29.6us, p99=106.8us)
+READ:  23307 ops/sec (mean=42.9us, p99=143.0us) [30% misses]
+
+## conc-lsm-never (4w/8r)
+disk=1390014
+WRITE: 89298 ops/sec, READ: 139201 ops/sec, AGGREGATE: 178595 ops/sec
+
+## pay-100B-lsm-lz77
+disk=1390014
+WRITE: 38260 ops/sec, READ: 47497 ops/sec
+
+## pay-100B-lsm-none
+disk=1390014
+WRITE: 39038 ops/sec, READ: 48168 ops/sec
+
+## pay-100B-kv-never
+disk=2780014
+WRITE: 34088 ops/sec, READ: 19469 ops/sec
+
+## pay-1KB-lsm-lz77
+disk=10630014
+WRITE: 34328 ops/sec, READ: 47481 ops/sec
+
+## pay-1KB-lsm-none
+disk=10630014
+WRITE: 34921 ops/sec, READ: 46365 ops/sec
+
+## pay-1KB-kv-never
+disk=21260014
+WRITE: 28154 ops/sec, READ: 18070 ops/sec
+
+## pay-10KB-lsm-lz77
+disk=20558014
+WRITE: 18254 ops/sec, READ: 38982 ops/sec
+
+## pay-10KB-lsm-none
+disk=20558014
+WRITE: 18030 ops/sec, READ: 40160 ops/sec
+
+## pay-10KB-kv-never
+disk=41116014
+WRITE: 11300 ops/sec, READ: 13194 ops/sec
+
+## pay-100KB-lsm-lz77
+disk=50216890
+WRITE: 2799 ops/sec, READ: 6565 ops/sec
+
+## pay-100KB-lsm-none
+disk=102443622
+WRITE: 2616 ops/sec, READ: 305 ops/sec
+
+## pay-100KB-kv-never
+disk=152429246
+WRITE: 1260 ops/sec, READ: 2477 ops/sec
+
+## pay-1MB-lsm-lz77
+disk=8161778
+WRITE: 21 ops/sec (mean=47.5ms, p99=2.376s), READ: 10 ops/sec (mean=104.8ms, p99=204.9ms)
+
+## pay-1MB-lsm-none
+disk=524312014
+WRITE: 221 ops/sec (mean=4.5ms, p99=14.1ms), READ: 14 ops/sec (mean=69.2ms, p99=136.1ms)
+
+## pay-1MB-kv-never
+disk=533745049
+WRITE: 135 ops/sec (mean=7.4ms, p99=30.7ms), READ: 213 ops/sec (mean=4.7ms, p99=24.9ms)

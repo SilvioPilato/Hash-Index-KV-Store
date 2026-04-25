@@ -92,6 +92,16 @@ Comprehensive evaluation of optimization strategies for block-based compression 
 
 # Closed Tasks
 
+## #66 — Fix LZ77 compression quality on low-entropy input (incremental chain building)
+
+The current `Lz77::encode` pre-built the entire hash chain before encoding began (`get_hash_chain`), storing the *last* occurrence of each 3-byte key across the whole input. At position `pos`, the hash table entry therefore pointed near N−3 (end of file), which is in the future relative to `pos`. All 128 MAX_CHAIN traversal steps were exhausted skipping forward-looking candidates without finding any valid back-reference. Result: uniform-byte input (e.g. `b'x'.repeat(N)` for large N) produced only literals — input doubled in size and encode was catastrophically slow (5 write ops/sec at 1 MB, disk 2×).
+
+Fix: build the hash chain **incrementally during encoding** — insert `pos` only after processing it, so the chain always contains positions strictly less than `pos`. All MAX_CHAIN steps now evaluate real match candidates.
+
+Benchmark results confirm the fix: at 1 MB payload, write throughput went from 5 → 21 ops/sec (+320%) and on-disk size went from 1,048 MB → 8 MB (−99.2%). See `docs/benchmark-comparison-2026-04-24-lz77fix.md` and `docs/benchmark-lz77-2026-04-24.md`.
+
+PR: <https://github.com/SilvioPilato/rustikv/pull/38>
+
 ## #29 — Block-based SSTable format with compression (DDIA Ch. 3)
 
 Partitioned SSTables into blocks with optional per-block LZ77 compression. Added a hand-rolled LZ77 codec (`src/lz77.rs`) using varint-encoded literal/match tokens, a 32 KB sliding window, and hash-chain match finding capped by `MAX_CHAIN`. New `src/block.rs` defines a 9-byte `BlockHeader` (`uncompressed_size`, `stored_size`, `compression_flag`), a `BlockWriter` that buffers records up to a target size and flushes compressed blocks, and a `BlockReader` that decompresses on read. Rewrote `SSTable::from_memtable`, `get`, `iter`, and `rebuild_index` to work block-by-block; the sparse index now points to block offsets instead of record offsets. New CLI flags `--block-size-kb` (default 4, range 1–1024) and `--block-compression` (`none`|`lz77`, default `lz77`) plumbed through `Settings` → `LsmShared` → `SizeTiered`/`Leveled` strategies. Breaking change: old record-only SSTables are not readable. Also fixed a latent `SSTableIter` bug (infinite loop yielding `Err` forever on CRC mismatch — discovered mid-implementation when the test binary hit 20+ GB RAM); iterator is now a fused iterator via a `done` flag.
