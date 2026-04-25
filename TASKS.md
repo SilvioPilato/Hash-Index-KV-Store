@@ -96,7 +96,7 @@ Comprehensive evaluation of optimization strategies for block-based compression 
 
 Replace the `HashMap<[u8;3], usize>` head-of-chain table in the LZ77 encoder with a flat `Vec<u32>` and a zlib-style rolling hash. The rolling hash feeds one byte at a time (`((prev << H_SHIFT) ^ byte) & mask`) so the literal branch advances in a single XOR+shift op. The match branch rolls through intermediate positions to keep state current. Eliminates per-lookup heap allocation and SipHash overhead, reducing encode cost at large payload sizes. Depends on #66.
 
-PR: 
+PR: <https://github.com/SilvioPilato/rustikv/pull/39>
 
 ## #66 — Fix LZ77 compression quality on low-entropy input (incremental chain building)
 
