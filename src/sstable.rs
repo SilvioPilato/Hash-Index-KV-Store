@@ -12,7 +12,7 @@ use crate::{
     record::{Record, RecordHeader},
 };
 
-const SPARSE_INDEX_INTERVAL: usize = 64;
+const SPARSE_INDEX_INTERVAL: usize = 1;
 const BLOOM_BITS_PER_KEY: usize = 10;
 const BLOOM_HASH_COUNT: u32 = 7;
 
