@@ -1,0 +1,9 @@
+# pay-1MB-lsm-never
+# server: rustikv --engine lsm --fsync-interval never
+# bench:  kvbench -n 500 -s 1048576
+# date:   2026-04-23T23:34:01Z
+# git:    a3d62f2
+
+Connected to 127.0.0.1:6666
+Mode: sequential  Keys: 500  Value size: 1048576B  Miss ratio: 0%  Range window: 100  Delete ratio: 0%  Overwrite rounds: 0  Distribution: uniform
+

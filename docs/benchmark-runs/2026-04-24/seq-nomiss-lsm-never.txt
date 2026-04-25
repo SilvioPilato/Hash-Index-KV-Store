@@ -1,0 +1,23 @@
+# seq-nomiss-lsm-never
+# server: rustikv --engine lsm --fsync-interval never
+# bench:  kvbench -n 10000 -s 100
+# date:   2026-04-23T23:30:43Z
+# git:    a3d62f2
+
+Connected to 127.0.0.1:6666
+Mode: sequential  Keys: 10000  Value size: 100B  Miss ratio: 0%  Range window: 100  Delete ratio: 0%  Overwrite rounds: 0  Distribution: uniform
+
+=== WRITE (10000 ops) ===
+  Total:      267.940ms
+  Throughput: 37322 ops/sec
+  Latency     min=18.700µs  mean=26.755µs  p99=71.200µs  max=3.687ms
+
+=== READ (uniform) (10000 ops) ===
+  Total:      223.228ms
+  Throughput: 44797 ops/sec
+  Latency     min=16.100µs  mean=22.282µs  p99=57.300µs  max=242.700µs
+
+=== RANGE (window=100) (100 ops) ===
+  Total:      5.959ms
+  Throughput: 16782 ops/sec
+  Latency     min=45.800µs  mean=59.531µs  p99=137.400µs  max=137.400µs

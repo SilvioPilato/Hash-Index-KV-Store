@@ -1,0 +1,19 @@
+# pay-1MB-kv-never
+# server: rustikv --engine kv --fsync-interval never
+# bench:  kvbench -n 500 -s 1048576 -r 0
+# date:   2026-04-23T23:33:32Z
+# git:    a3d62f2
+
+Connected to 127.0.0.1:6666
+Mode: sequential  Keys: 500  Value size: 1048576B  Miss ratio: 0%  Range window: 0  Delete ratio: 0%  Overwrite rounds: 0  Distribution: uniform
+
+=== WRITE (500 ops) ===
+  Total:      3.636s
+  Throughput: 137 ops/sec
+  Latency     min=5.964ms  mean=7.273ms  p99=25.889ms  max=44.551ms
+
+=== READ (uniform) (500 ops) ===
+  Total:      2.260s
+  Throughput: 221 ops/sec
+  Latency     min=3.622ms  mean=4.519ms  p99=20.620ms  max=25.635ms
+

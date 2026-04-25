@@ -16,4 +16,9 @@ path = "src/bin/kvbench.rs"
 name = "rustikv"
 path = "src/main.rs"
 
+[[bin]]
+name = "engbench"
+path = "src/bin/engbench.rs"
+
 [dependencies]
+sled = "0.34"

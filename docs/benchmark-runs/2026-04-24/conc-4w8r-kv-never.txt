@@ -1,0 +1,24 @@
+# conc-4w8r-kv-never
+# server: rustikv --engine kv --fsync-interval never
+# bench:  kvbench -n 10000 -s 100 -r 0 --mode concurrent --writers 4 --readers 8
+# date:   2026-04-23T23:32:34Z
+# git:    a3d62f2
+
+Connected to 127.0.0.1:6666
+Mode: concurrent  Keys: 10000  Value size: 100B  Writers: 4  Readers: 8  Miss ratio: 0%  Range window: 0  Delete ratio: 0%  Overwrite rounds: 0  Distribution: uniform
+
+=== WRITE (10000 ops) ===
+  Total:      3.391s
+  Throughput: 2949 ops/sec
+  Latency     min=23.700µs  mean=1.353ms  p99=8.124ms  max=30.871ms
+
+=== READ (10000 ops) ===
+  Total:      3.343s
+  Throughput: 2991 ops/sec
+  Latency     min=18.600µs  mean=1.673ms  p99=8.601ms  max=17.290ms
+  Misses:     8802 (88.0%)
+
+
+=== AGGREGATE (20000 ops) ===
+  Wall time:  3.391s
+  Throughput: 5898 ops/sec
