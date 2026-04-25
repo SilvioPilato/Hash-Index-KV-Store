@@ -92,6 +92,12 @@ Comprehensive evaluation of optimization strategies for block-based compression 
 
 # Closed Tasks
 
+## #67 — LZ77 encoder performance: flat hash table + rolling hash
+
+Replace the `HashMap<[u8;3], usize>` head-of-chain table in the LZ77 encoder with a flat `Vec<u32>` and a zlib-style rolling hash. The rolling hash feeds one byte at a time (`((prev << H_SHIFT) ^ byte) & mask`) so the literal branch advances in a single XOR+shift op. The match branch rolls through intermediate positions to keep state current. Eliminates per-lookup heap allocation and SipHash overhead, reducing encode cost at large payload sizes. Depends on #66.
+
+PR: 
+
 ## #66 — Fix LZ77 compression quality on low-entropy input (incremental chain building)
 
 The current `Lz77::encode` pre-built the entire hash chain before encoding began (`get_hash_chain`), storing the *last* occurrence of each 3-byte key across the whole input. At position `pos`, the hash table entry therefore pointed near N−3 (end of file), which is in the future relative to `pos`. All 128 MAX_CHAIN traversal steps were exhausted skipping forward-looking candidates without finding any valid back-reference. Result: uniform-byte input (e.g. `b'x'.repeat(N)` for large N) produced only literals — input doubled in size and encode was catastrophically slow (5 write ops/sec at 1 MB, disk 2×).
