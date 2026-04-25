@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-
 const SEARCH_WINDOW: usize = 32_768;
 const LOOKAHEAD_WINDOW: usize = 258;
 const MAX_CHAIN: usize = 128;
+const HASH_SIZE: usize = 32_768; // must equal 2^(3 * H_SHIFT) for sliding-window property
+const H_SHIFT: u32 = 5; // 3 * 5 = 15 bits → mask = 32767
 pub struct Lz77;
 
 struct Match {
@@ -13,25 +13,47 @@ struct Match {
 impl Lz77 {
     pub fn encode(data: &[u8]) -> Vec<u8> {
         let mut output = Vec::new();
-        let mut table = HashMap::new();
+        let mut table = vec![u32::MAX; HASH_SIZE];
         let mut chain = vec![None; data.len()];
         let mut pos: usize = 0;
 
+        // Prime the rolling hash with the first two bytes so that feeding
+        // data[pos+2] at each step produces the trigram hash for position pos.
+        let mut hash = 0u32;
+        if !data.is_empty() {
+            hash = Self::rolling_hash(hash, data[0]);
+        }
+        if data.len() >= 2 {
+            hash = Self::rolling_hash(hash, data[1]);
+        }
+
         while pos < data.len() {
-            match Self::find_longest_match(data, pos, &table, &chain) {
+            // Feed data[pos+2] to complete the trigram hash for this position.
+            if pos + 2 < data.len() {
+                hash = Self::rolling_hash(hash, data[pos + 2]);
+            }
+
+            match Self::find_longest_match(data, pos, hash as usize, &table, &chain) {
                 Some(best_match) => {
                     output.push(1);
                     Self::encode_varint(best_match.offset as u32, &mut output);
                     Self::encode_varint(best_match.len as u32, &mut output);
 
-                    // Insert all matched positions into the table
+                    // Insert pos with the current hash, then roll through the
+                    // remaining matched positions, inserting each one.
                     for i in 0..best_match.len {
                         if pos + i + 3 <= data.len() {
-                            let hash: [u8; 3] = data[pos + i..pos + i + 3].try_into().unwrap();
-                            if let Some(&old_pos) = table.get(&hash) {
-                                chain[pos + i] = Some(old_pos);
+                            let h = hash as usize;
+                            let old_head = table[h];
+                            if old_head != u32::MAX {
+                                chain[pos + i] = Some(old_head as usize);
                             }
-                            table.insert(hash, pos + i);
+                            table[h] = (pos + i) as u32;
+                        }
+                        // Roll hash forward for pos+i+1 (feed data[(pos+i+1)+2]).
+                        let next = pos + i + 3;
+                        if next < data.len() {
+                            hash = Self::rolling_hash(hash, data[next]);
                         }
                     }
                     pos += best_match.len;
@@ -40,15 +62,18 @@ impl Lz77 {
                     output.push(0);
                     output.push(data[pos]);
 
-                    // Insert position into table
+                    // Insert position into table.
                     if pos + 3 <= data.len() {
-                        let hash: [u8; 3] = data[pos..pos + 3].try_into().unwrap();
-                        if let Some(&old_pos) = table.get(&hash) {
-                            chain[pos] = Some(old_pos);
+                        let h = hash as usize;
+                        let old_head = table[h];
+                        if old_head != u32::MAX {
+                            chain[pos] = Some(old_head as usize);
                         }
-                        table.insert(hash, pos);
+                        table[h] = pos as u32;
                     }
                     pos += 1;
+                    // Hash for pos+1 will be completed at the top of the next
+                    // iteration when we feed data[pos+2].
                 }
             }
         }
@@ -102,7 +127,8 @@ impl Lz77 {
     fn find_longest_match(
         data: &[u8],
         pos: usize,
-        table: &HashMap<[u8; 3], usize>,
+        hash: usize,
+        table: &[u32],
         chain: &[Option<usize>],
     ) -> Option<Match> {
         let mut best_offset = 0;
@@ -114,8 +140,11 @@ impl Lz77 {
         if lookahead.len() < 3 {
             return None;
         }
-        let key: [u8; 3] = lookahead[..3].try_into().unwrap();
-        let mut candidate = *table.get(&key)?;
+        let first = table[hash];
+        if first == u32::MAX {
+            return None;
+        }
+        let mut candidate = first as usize;
 
         loop {
             if iteration >= MAX_CHAIN {
@@ -131,7 +160,7 @@ impl Lz77 {
                         candidate = prev;
                         continue;
                     }
-                    None => break, // No earlier occurrence exists
+                    None => break,
                 }
             }
 
@@ -198,5 +227,13 @@ impl Lz77 {
         }
 
         (value, i + 1)
+    }
+
+    // Feed one byte into the rolling hash. With HASH_SIZE = 2^(3*H_SHIFT), the
+    // contribution of a byte shifts out after exactly 3 calls, giving a true
+    // 3-byte sliding window: rolling_hash(rolling_hash(rolling_hash(s,a),b),c)
+    // hashes the trigram (a,b,c) regardless of prior state.
+    fn rolling_hash(prev: u32, byte: u8) -> u32 {
+        ((prev << H_SHIFT) ^ byte as u32) & (HASH_SIZE as u32 - 1)
     }
 }
