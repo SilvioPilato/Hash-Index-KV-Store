@@ -2,6 +2,14 @@
 
 # Open Tasks
 
+## #68 — Client-side request pipelining + bench coverage
+
+Verify and exercise pipelining over the existing BFFP framing. Pipelining is purely a client-side optimization for now: the client writes N request frames back-to-back without reading between them, then drains N responses in arrival order. TCP and the per-connection request loop already preserve order, so no protocol or server changes are expected — but the task includes a small integration test that asserts the server doesn't deadlock when many requests are buffered before the client reads, and that responses come back in the order they were issued. Adds `--pipeline N` (default `1`) to `redis-compare` so the bench can measure rustikv with RTT removed and compare against `redis-benchmark -P` numbers on the same workload. Update `bench/docker-compose.yml` usage docs accordingly. Out of scope: any tagged/multiplexed frames or out-of-order responses (see #69).
+
+## #69 — Tagged/multiplexed BFFP frames (`correlation_id`)
+
+Schema-evolve BFFP to carry a client-assigned `correlation_id: u32` in every request and response frame, allowing out-of-order responses on a single connection. Lets clients hold many requests in flight concurrently and matched purely by ID — Kafka/MongoDB-style. Reserve a sentinel value (e.g. `u32::MAX`) for connection-level error frames where the server can't parse a request well enough to know its ID. Bump the BFFP version byte and reject mixed-version frames on a connection. Server side: demonstrate the value by allowing the per-connection handler to dispatch reads concurrently (depends on #61 — engine-internal concurrency — for any meaningful throughput gain on multi-core; until then, the change is correctness-only). Client side: a small async-style client API that returns a future per request, resolved when the matching response arrives. Bench: extend `redis-compare` with `--inflight N` (distinct from `--pipeline N` from #68) — issues N concurrent in-flight requests with bookkeeping over `correlation_id`. Compare both modes head-to-head and against Redis-pipelined numbers. Depends on #68 landing (so the bench has something to compare against) and benefits from #61.
+
 ## #62 — Versioned snapshots for KVEngine (RocksDB-style)
 
 Replace the `RwLock<HashIndex>` in KVEngine with `RwLock<Arc<Version>>` where `Version` holds the index + segment list. Readers clone the Arc and release the lock before file I/O, eliminating the concurrent throughput regression from #61. Old segments stay alive until the last reader drops its Arc. Compaction waits for in-flight readers before deleting old files.
