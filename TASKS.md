@@ -1,5 +1,11 @@
 # In Progress
 
+## #56 — `TTL` command
+
+Add a `TTL <key> <seconds>` TCP command that associates an expiry timestamp with a key. Expired keys are invisible to reads and cleaned up during compaction. Requires storing the expiry alongside the value in the record format (or as a separate metadata field). Good exercise in extending the on-disk format and compaction logic.
+
+Spec: `docs/superpowers/specs/2026-05-10-ttl-design.md`
+
 # Open Tasks
 
 ## #73 — Replace `server.addr` file with stdout-based port discovery
@@ -73,10 +79,6 @@ Add `FIRST` and `LAST` TCP commands that return the lexicographically smallest a
 ## #55 — `INCR` command
 
 Add an `INCR <key>` TCP command that atomically increments an integer value stored at a key (creating it at 1 if absent). Returns the new value. Teaches read-modify-write atomicity — must be handled under the engine's write lock to avoid races. Supported by both engines.
-
-## #56 — `TTL` command
-
-Add a `TTL <key> <seconds>` TCP command that associates an expiry timestamp with a key. Expired keys are invisible to reads and cleaned up during compaction. Requires storing the expiry alongside the value in the record format (or as a separate metadata field). Good exercise in extending the on-disk format and compaction logic.
 
 ## #58 — `FLUSH` command (LSM only)
 
