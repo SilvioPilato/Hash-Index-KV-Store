@@ -277,18 +277,20 @@ For in-repo clients (rustikli, kvbench, redis-compare): the BFFP encoder for `WR
 
 ## Future Work (filed as follow-up tasks after this PR lands)
 
+Listed in the order they will be filed and worked. Numbers are sequential per `AGENTS.md`; the first four form the planned arc toward telemetry-grade retention, the rest are independent improvements.
+
 | # | Task | Notes |
 |---|---|---|
-| #74 | Time-Window Compaction Strategy (TWCS) | Per agent research: requires collections to be meaningfully implemented |
-| #75 | Server-side aggregation (`SUM`/`AVG`/`MIN`/`MAX` over `RANGE`) | From the telemetry doc |
-| #76 | Collections / column families (RocksDB-style) | Per-collection memtable, SSTables, compaction config, default TTL |
-| #77 | Per-collection default TTL | Trivial once #76 exists |
+| #74 | Server-side aggregation (`SUM`/`AVG`/`MIN`/`MAX` over `RANGE`) | Small, telemetry-aligned, independent of TTL. Worked first. |
+| #75 | Collections / column families (RocksDB-style) | Per-collection memtable, SSTables, compaction config, default TTL. Major architectural addition; the keystone for what follows. |
+| #76 | Per-collection default TTL | Trivial once #75 exists. Replaces any need for a server-wide `--default-ttl`. |
+| #77 | Time-Window Compaction Strategy (TWCS) | Per agent research: requires collections to be meaningfully implemented (operates on a per-collection SSTable set). |
 | #78 | `KEEPTTL` flag on `WRITE`/`MSET` | One reserved flag bit; preserves existing TTL on overwrite |
 | #79 | Background expiry sweeper (Redis-style sampling) | Only if compaction-driven cleanup proves insufficient |
 | #80 | TTL inspection commands (`PTTL`, `EXPIRETIME`) | Read remaining TTL or absolute expiry |
 | #81 | `Clock` trait abstraction for testable time-dependent logic | Only if long-horizon or boundary-condition tests become necessary |
 
-Server-wide `--default-ttl` is intentionally *not* listed: per agent research, prefix-based or server-wide defaults are config sugar that don't unlock the LSM lessons. The natural next step is true collections (#76), which subsume that need.
+A server-wide `--default-ttl` flag was considered and rejected. Per agent research, prefix-based or server-wide defaults are config sugar that don't unlock LSM lessons. The retention-by-default story is told properly through collections (#75) plus per-collection defaults (#76).
 
 ## Decisions Locked
 
