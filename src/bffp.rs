@@ -115,7 +115,7 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
             let flag = read_flags(&mut cur)?;
             let key = read_key(&mut cur)?;
             let value = read_value(&mut cur)?;
-            let ttl = if flag == FLAG_HAS_TTL {
+            let ttl = if flag & FLAG_HAS_TTL != 0 {
                 Some(read_ttl(&mut cur)?)
             } else {
                 None
@@ -143,7 +143,7 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
                 let flag = read_flags(&mut cur)?;
                 let key = read_key(&mut cur)?;
                 let value = read_value(&mut cur)?;
-                let ttl = if flag == FLAG_HAS_TTL {
+                let ttl = if flag & FLAG_HAS_TTL != 0 {
                     Some(read_ttl(&mut cur)?)
                 } else {
                     None
