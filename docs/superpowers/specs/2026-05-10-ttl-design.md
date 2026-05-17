@@ -113,7 +113,7 @@ pub trait StorageEngine: Send + Sync {
         items: Vec<(String, String, Option<u64>)>,
     ) -> io::Result<()>;
 
-    fn ttl(&self, key: &str, seconds: u32) -> io::Result<TtlOutcome>;
+    fn ttl(&self, key: &str, expiry_ms: Option<u64>) -> io::Result<TtlOutcome>;
 
     // Default impls — engines don't override
     fn set(&self, key: &str, value: &str) -> io::Result<()> {
@@ -127,13 +127,15 @@ pub trait StorageEngine: Send + Sync {
 }
 
 pub enum TtlOutcome {
-    Set,        // seconds > 0, key exists, expiry applied
-    Persisted,  // seconds == 0, key exists; expiry stripped or was already absent on the key
+    Set,        // expiry_ms = Some(...), key exists, expiry applied
+    Persisted,  // expiry_ms = None, key exists; expiry stripped or was already absent on the key
     NotFound,   // key does not exist
 }
 ```
 
 Both engines refactor their existing `set`/`mset` paths under `set_with_ttl`/`mset_with_ttl`. No behavioral change for non-TTL writes.
+
+**The engine speaks one language: absolute `expiry_ms: Option<u64>`.** All three TTL-aware methods (`set_with_ttl`, `mset_with_ttl`, `ttl`) accept the same shape. Wire-protocol concepts — relative seconds, the `0 = PERSIST` sentinel — are converted at the dispatch boundary (see section 10) before reaching the engine. Engines never see raw seconds.
 
 ### 4. Memtable changes
 
@@ -188,16 +190,38 @@ Both engines drop expired records during compaction. Capture `now_ms` once at th
 - `storage_strategy.compact_if_needed` invoked via `LsmEngine::compact_step` (the auto-compaction trigger from #35)
 - The level-merge paths inside [src/leveled.rs](../../../src/leveled.rs) and the tier-merge paths inside [src/size_tiered.rs](../../../src/size_tiered.rs)
 
-Logic at every emit site:
+**The safe-drop rule.** At every emit site, when `is_expired(record.expiry_ms, now_ms)`:
 
-- When emitting a record, if `is_expired(record.expiry_ms, now_ms)` → skip emit entirely. Don't even write a tombstone — the key is already invisible on read paths, and emitting a tombstone would just delay reclamation.
-- Increment `Stats::expired_compacted` per skipped record.
+> **Drop the record entirely (no tombstone) iff this operation also removes every older version of that key. Otherwise emit a tombstone** (`flags = FLAG_TOMBSTONE`, empty value, no expiry).
+
+Either way, increment `Stats::expired_compacted` per record removed.
+
+**Why a tombstone is sometimes mandatory.** The "expired key is already invisible" claim relies on the section 5 rule that an expired active-memtable hit returns `None` without falling through to older SSTables. That shield only exists *while the entry is in the memtable*. The read path ([src/lsmengine.rs](../../../src/lsmengine.rs) `get`) walks SSTables newest-first and stops at the first hit, where a tombstone (`Some(None)`) shadows older segments. If an emit site that does **not** consume the older versions drops the expired key entirely, the new segment lacks the key, `get` falls through to a lower segment, and a stale, non-expired older value resurrects:
+
+```text
+t0   WRITE k v1 (no TTL)        → flushed to a lower SSTable
+t1   WRITE k v2 EX 10           → memtable, expiry = t1+10
+t12  memtable flushes; v2 expired
+       drop v2 entirely (no tombstone)
+t13  GET k → not in memtable, new segment has no `k`,
+             falls through → returns v1   ← resurrection bug
+```
+
+Per-site application of the rule:
+
+| Emit site | Older versions consumed? | Action on expired record |
+|---|---|---|
+| [src/sstable.rs](../../../src/sstable.rs) `SSTable::from_memtable` (memtable flush) | No — only the memtable is read | **Tombstone** |
+| Leveled partial level-merge ([src/leveled.rs](../../../src/leveled.rs)) | Only if the merge includes the bottom-most level holding the key | **Tombstone** unless a lower level still holds an older version; then drop |
+| Size-tiered partial tier-merge ([src/size_tiered.rs](../../../src/size_tiered.rs)) | Same conditional as leveled | Same conditional as leveled |
+| `storage_strategy.compact_all` (full compaction) | Yes — all segments | **Drop entirely** |
+| `storage_strategy.compact_if_needed` via `LsmEngine::compact_step` (#35 auto-trigger) | Per the underlying strategy's merge scope | Drop/tombstone per the partial-merge rows above |
 
 Missing one of these paths means automatic background compaction would never reclaim expired records — implementation must touch all of them.
 
 **KV** ([src/kvengine.rs](../../../src/kvengine.rs) compaction):
 
-- Same logic in the segment-merge loop.
+- Same safe-drop rule in the segment-merge loop: drop entirely only when the merge consumes every older version of the key; otherwise emit a tombstone.
 - Hash-index entries whose only live record was dropped are removed from the index.
 
 ### 7. WAL handling
@@ -237,20 +261,45 @@ Both surfaced in the `STATS` command output.
 
 ### 10. Server dispatch
 
-[src/main.rs](../../../src/main.rs) — wherever `Command::Write` and `Command::Mset` are dispatched today, route through `set_with_ttl`/`mset_with_ttl` with the parsed expiry. New `Command::Ttl(key, seconds)` variant dispatches to `engine.ttl(&key, seconds)`.
+[src/server/dispatch.rs](../../../src/server/dispatch.rs) — wherever `Command::Write` and `Command::Mset` are dispatched today, route through `set_with_ttl`/`mset_with_ttl` with the parsed expiry. New `Command::Ttl(key, seconds)` variant dispatches to `engine.ttl(&key, expiry_ms)`.
 
 `Command` enum changes:
 
 ```rust
 pub enum Command {
     // ... existing ...
-    Write(String, String, Option<u32>),      // was (String, String)
+    Write(String, String, Option<u32>),       // was (String, String)
     Mset(Vec<(String, String, Option<u32>)>), // was (Vec<(String, String)>)
     Ttl(String, u32),                         // new
 }
 ```
 
-The `Option<u32>` carries seconds-from-the-wire; the server converts to `expiry_ms` immediately before calling the engine.
+The `Option<u32>` carries seconds-from-the-wire. **The dispatch layer converts to absolute `Option<u64>` ms before calling the engine** — engines never see raw seconds or the `0 = PERSIST` sentinel:
+
+```rust
+fn seconds_to_expiry_ms(seconds: u32) -> Option<u64> {
+    if seconds == 0 {
+        None  // PERSIST sentinel — strip expiry
+    } else {
+        Some(now_ms() + (seconds as u64) * 1000)
+    }
+}
+
+// dispatch sites
+Command::Write(key, value, ttl_seconds) => {
+    let expiry_ms = ttl_seconds.and_then(|s| {
+        if s == 0 { None } else { Some(now_ms() + (s as u64) * 1000) }
+    });
+    engine.set_with_ttl(&key, &value, expiry_ms)
+}
+
+Command::Ttl(key, seconds) => {
+    let expiry_ms = seconds_to_expiry_ms(seconds);
+    engine.ttl(&key, expiry_ms)
+}
+```
+
+Note: `Command::Ttl` keeps `u32` seconds (matches the wire). The `0 = PERSIST` rule lives at this layer, not in the engine.
 
 ## Test Plan
 

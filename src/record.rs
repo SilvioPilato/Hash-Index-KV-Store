@@ -7,11 +7,16 @@ use std::{
 use crate::crc::crc32;
 
 pub const SIZE_FIELD_LEN: usize = 8;
-pub const TOMBSTONE_LEN: usize = 1;
-pub const RECORD_HEADER_LEN: usize = CRC_LEN + SIZE_FIELD_LEN * 2 + TOMBSTONE_LEN;
+pub const FLAGS_LEN: usize = 1;
+pub const RECORD_HEADER_LEN: usize = CRC_LEN + SIZE_FIELD_LEN * 2 + FLAGS_LEN;
+pub const TTL_LEN: usize = 8;
 pub const MAX_KEY_SIZE: usize = 1_048_576;
 pub const MAX_VALUE_SIZE: usize = 1_048_576 * 5;
 pub const CRC_LEN: usize = 4;
+
+pub const FLAG_TOMBSTONE: u8 = 1 << 0;
+pub const FLAG_HAS_EXPIRY: u8 = 1 << 1;
+
 /// The fixed-size header that precedes every key-value record on disk.
 ///
 /// Layout (21 bytes, all integers big-endian):
@@ -30,8 +35,8 @@ pub struct RecordHeader {
     pub key_size: u64,
     /// Length of the value in bytes.
     pub value_size: u64,
-    /// If `true`, this record marks a deletion (value is empty).
-    pub tombstone: bool,
+    pub flags: u8,
+    pub expiry_ms: Option<u64>,
 }
 
 /// A complete key-value record as stored in a segment file.
@@ -74,16 +79,27 @@ impl Record {
         let mut c32_buf = [0u8; CRC_LEN];
         let mut k_buf = [0u8; SIZE_FIELD_LEN];
         let mut v_buf = [0u8; SIZE_FIELD_LEN];
-        let mut t_buf = [0u8; TOMBSTONE_LEN];
+        let mut f_buf = [0u8; FLAGS_LEN];
         file.read_exact(&mut c32_buf)?;
         file.read_exact(&mut k_buf)?;
         file.read_exact(&mut v_buf)?;
-        file.read_exact(&mut t_buf)?;
+        file.read_exact(&mut f_buf)?;
+
+        let flags = f_buf[0];
+        let expiry_ms = if flags & FLAG_HAS_EXPIRY != 0 {
+            let mut ttl_buf = [0u8; TTL_LEN];
+            file.read_exact(&mut ttl_buf)?;
+            Some(u64::from_be_bytes(ttl_buf))
+        } else {
+            None
+        };
+
         Ok(RecordHeader {
             crc32: u32::from_be_bytes(c32_buf),
             key_size: u64::from_be_bytes(k_buf),
             value_size: u64::from_be_bytes(v_buf),
-            tombstone: t_buf[0] != 0,
+            flags: u8::from_be_bytes(f_buf),
+            expiry_ms,
         })
     }
 
@@ -116,7 +132,7 @@ impl Record {
         let mut payload = Vec::with_capacity(header.key_size as usize + header.value_size as usize);
         payload.extend_from_slice(&header.key_size.to_be_bytes());
         payload.extend_from_slice(&header.value_size.to_be_bytes());
-        payload.extend_from_slice(&[header.tombstone as u8]);
+        payload.extend_from_slice(&[header.flags]);
         payload.extend_from_slice(&k_buf);
         payload.extend_from_slice(&v_buf);
         let crc32 = crc32(&payload);
@@ -140,11 +156,23 @@ impl Record {
         let payload_start = CRC_LEN;
         buf.extend_from_slice(&self.header.key_size.to_be_bytes());
         buf.extend_from_slice(&self.header.value_size.to_be_bytes());
-        buf.extend_from_slice(&[self.header.tombstone as u8]);
+        buf.extend_from_slice(&[self.header.flags]);
         buf.extend_from_slice(self.key.as_bytes());
         buf.extend_from_slice(self.value.as_bytes());
+        if let Some(ms) = self.header.expiry_ms {
+            buf.extend_from_slice(&ms.to_be_bytes());
+        }
         let checksum = crc32(&buf[payload_start..]);
         buf[..CRC_LEN].copy_from_slice(&checksum.to_be_bytes());
         buf
+    }
+}
+
+impl RecordHeader {
+    pub fn set_ttl(&mut self, expiry_ms: u64) {
+        self.expiry_ms = Some(expiry_ms);
+    }
+    pub fn is_tombstone(&self) -> bool {
+        self.flags & FLAG_TOMBSTONE != 0
     }
 }

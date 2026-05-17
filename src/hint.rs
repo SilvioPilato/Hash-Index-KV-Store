@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::record::{SIZE_FIELD_LEN, TOMBSTONE_LEN};
+use crate::record::{FLAGS_LEN, SIZE_FIELD_LEN};
 
 pub struct Hint {}
 #[derive(Debug)]
@@ -26,7 +26,7 @@ impl Hint {
             let mut buf: Vec<u8> = Vec::with_capacity(
                 SIZE_FIELD_LEN
                     + entry.offset.to_be_bytes().len()
-                    + TOMBSTONE_LEN
+                    + FLAGS_LEN
                     + entry.key_size as usize,
             );
 
@@ -50,7 +50,7 @@ impl Hint {
         while file.stream_position()? < file_size {
             let mut ks_buf = [0u8; SIZE_FIELD_LEN];
             let mut o_buf = [0u8; SIZE_FIELD_LEN];
-            let mut t_buf = [0u8; TOMBSTONE_LEN];
+            let mut t_buf = [0u8; FLAGS_LEN];
             file.read_exact(&mut ks_buf)?;
             file.read_exact(&mut o_buf)?;
             file.read_exact(&mut t_buf)?;

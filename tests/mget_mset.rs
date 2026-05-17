@@ -67,7 +67,7 @@ fn send_frame(addr: &str, frame: Vec<u8>) -> Vec<u8> {
 }
 
 fn write_key(addr: &str, key: &str, value: &str) {
-    let frame = encode_command(Command::Write(key.to_string(), value.to_string()));
+    let frame = encode_command(Command::Write(key.to_string(), value.to_string(), None));
     let buf = send_frame(addr, frame);
     let resp = decode_response_frame(&buf).expect("decode failed");
     assert!(matches!(resp.status, ResponseStatus::Ok));
@@ -129,9 +129,9 @@ fn mset_writes_multiple_keys_readable_individually() {
     wait_for_server(&addr);
 
     let frame = encode_command(Command::Mset(vec![
-        ("k1".to_string(), "v1".to_string()),
-        ("k2".to_string(), "v2".to_string()),
-        ("k3".to_string(), "v3".to_string()),
+        ("k1".to_string(), "v1".to_string(), None),
+        ("k2".to_string(), "v2".to_string(), None),
+        ("k3".to_string(), "v3".to_string(), None),
     ]));
     let buf = send_frame(&addr, frame);
     let resp = decode_response_frame(&buf).expect("decode failed");
@@ -159,7 +159,11 @@ fn mset_overwrites_existing_keys() {
 
     write_key(&addr, "k1", "old");
 
-    let frame = encode_command(Command::Mset(vec![("k1".to_string(), "new".to_string())]));
+    let frame = encode_command(Command::Mset(vec![(
+        "k1".to_string(),
+        "new".to_string(),
+        None,
+    )]));
     let buf = send_frame(&addr, frame);
     let resp = decode_response_frame(&buf).expect("decode failed");
     assert!(matches!(resp.status, ResponseStatus::Ok));

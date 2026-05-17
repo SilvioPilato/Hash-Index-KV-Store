@@ -6,10 +6,12 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Mutex, RwLock};
 
-use crate::engine::StorageEngine;
+use crate::engine::{StorageEngine, TtlOutcome};
 use crate::hash_index::HashIndex;
 use crate::hint::{Hint, HintEntry};
-use crate::record::{MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader};
+use crate::record::{
+    FLAG_HAS_EXPIRY, FLAG_TOMBSTONE, MAX_KEY_SIZE, MAX_VALUE_SIZE, Record, RecordHeader,
+};
 use crate::segment::{Segment, get_segments};
 use crate::settings::FSyncStrategy;
 use crate::wal::Wal;
@@ -125,15 +127,20 @@ impl KVEngine {
         let memtable = wal.replay()?;
         let file = current_file.as_mut().unwrap();
         let segment = active_segment.unwrap();
-        for (key, value) in memtable.entries() {
-            match value {
+        for (key, entry) in memtable.entries() {
+            match entry.value.as_deref() {
                 Some(val) => {
                     let record = Record {
                         header: RecordHeader {
                             crc32: 0u32,
                             key_size: key.len() as u64,
                             value_size: val.len() as u64,
-                            tombstone: false,
+                            flags: if entry.expiry_ms.is_some() {
+                                FLAG_HAS_EXPIRY
+                            } else {
+                                0u8
+                            },
+                            expiry_ms: entry.expiry_ms,
                         },
                         key: key.to_string(),
                         value: val.to_string(),
@@ -153,7 +160,8 @@ impl KVEngine {
                             crc32: 0u32,
                             key_size: key.len() as u64,
                             value_size: 0,
-                            tombstone: true,
+                            flags: FLAG_TOMBSTONE,
+                            expiry_ms: None,
                         },
                         key: key.to_string(),
                         value: String::new(),
@@ -422,7 +430,7 @@ impl StorageEngine for KVEngine {
 
         {
             let mut wal = self.wal.lock().unwrap();
-            wal.append(key.to_string(), value.to_string(), false)?;
+            wal.append(key.to_string(), value.to_string(), false, None)?;
         }
 
         let record = Record {
@@ -430,7 +438,8 @@ impl StorageEngine for KVEngine {
                 crc32: 0u32,
                 key_size: key.len() as u64,
                 value_size: value.len() as u64,
-                tombstone: false,
+                flags: 0u8,
+                expiry_ms: None,
             },
             key: key.to_string(),
             value: value.to_string(),
@@ -476,7 +485,7 @@ impl StorageEngine for KVEngine {
 
         {
             let mut wal = self.wal.lock().unwrap();
-            wal.append(key.to_string(), String::new(), true)?;
+            wal.append(key.to_string(), String::new(), true, None)?;
         }
 
         let old = {
@@ -490,7 +499,8 @@ impl StorageEngine for KVEngine {
                         crc32: 0u32,
                         key_size: key.len() as u64,
                         value_size: 0,
-                        tombstone: true,
+                        flags: FLAG_TOMBSTONE,
+                        expiry_ms: None,
                     },
                     key: key.to_string(),
                     value: String::new(),
@@ -556,5 +566,81 @@ impl StorageEngine for KVEngine {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn ttl(&self, key: &str, expiry_ms: Option<u64>) -> io::Result<crate::engine::TtlOutcome> {
+        match self.get(key)? {
+            Some((k, v)) => {
+                self.set_with_ttl(&k, &v, expiry_ms)?;
+                if expiry_ms.is_some() {
+                    Ok(TtlOutcome::Set)
+                } else {
+                    Ok(TtlOutcome::Persisted)
+                }
+            }
+            None => Ok(TtlOutcome::NotFound),
+        }
+    }
+
+    fn set_with_ttl(&self, key: &str, value: &str, expiry_ms: Option<u64>) -> io::Result<()> {
+        if key.len() > MAX_KEY_SIZE || value.len() > MAX_VALUE_SIZE {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "key or value exceeds maximum allowed size",
+            ));
+        }
+
+        {
+            let mut wal = self.wal.lock().unwrap();
+            wal.append(key.to_string(), value.to_string(), false, expiry_ms)?;
+        }
+
+        let record = Record {
+            header: RecordHeader {
+                crc32: 0u32,
+                key_size: key.len() as u64,
+                value_size: value.len() as u64,
+                flags: if expiry_ms.is_some() {
+                    FLAG_HAS_EXPIRY
+                } else {
+                    0
+                },
+                expiry_ms,
+            },
+            key: key.to_string(),
+            value: value.to_string(),
+        };
+
+        let (offset, timestamp) = {
+            let mut active_file = self.active_file.lock().unwrap();
+            let mut active_segment = self.active_segment.lock().unwrap();
+
+            let seg_size = active_file.file.seek(SeekFrom::End(0))?;
+
+            if self.max_segment_bytes.load(Relaxed) < seg_size + record.size_on_disk() {
+                self.roll_segment(&mut active_file, &mut active_segment)?;
+            }
+
+            let offset = record.append(&mut active_file.file)?;
+            (offset, active_segment.timestamp)
+        };
+
+        let mut index = self.index.write().unwrap();
+        if let Some(old) = index.set(key.to_string(), offset, timestamp, record.size_on_disk()) {
+            self.dead_bytes.fetch_add(old.record_size, Relaxed);
+        }
+        drop(index);
+        self.total_bytes.fetch_add(record.size_on_disk(), Relaxed);
+        self.fsync()?;
+
+        Ok(())
+    }
+
+    fn mset_with_ttl(&self, items: Vec<(String, String, Option<u64>)>) -> io::Result<()> {
+        for (k, v, expiry_ms) in items {
+            self.set_with_ttl(&k, &v, expiry_ms)?;
+        }
+
+        Ok(())
     }
 }

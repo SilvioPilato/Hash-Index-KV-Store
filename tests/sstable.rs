@@ -16,7 +16,7 @@ fn temp_dir(suffix: &str) -> String {
 fn make_memtable(entries: &[(&str, &str)]) -> Memtable {
     let mut mt = Memtable::new();
     for (k, v) in entries {
-        mt.insert(k.to_string(), v.to_string());
+        mt.insert(k.to_string(), v.to_string(), None);
     }
     mt
 }
@@ -45,7 +45,7 @@ fn get_missing_key() {
 fn get_returns_tombstone() {
     let dir = temp_dir("tombstone");
     let mut mt = Memtable::new();
-    mt.insert("alive".to_string(), "yes".to_string());
+    mt.insert("alive".to_string(), "yes".to_string(), None);
     mt.remove("dead".to_string());
     let sst = SSTable::from_memtable(&dir, "test", &mt, None, 4096, true).unwrap();
 

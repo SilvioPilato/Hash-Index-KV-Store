@@ -73,7 +73,7 @@ impl HashIndex {
             let record = Record::read_next(file)?;
             let header = record.header;
 
-            if header.tombstone {
+            if header.is_tombstone() {
                 hashmap.remove(&record.key);
                 continue;
             }
@@ -102,7 +102,7 @@ impl HashIndex {
             let record = Record::read_next(file)?;
             let header = record.header;
 
-            if header.tombstone {
+            if header.is_tombstone() {
                 self.hashmap.remove(&record.key);
                 continue;
             }

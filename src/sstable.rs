@@ -9,7 +9,8 @@ use crate::{
     block::{BlockHeader, BlockReader, BlockWriter},
     bloom::BloomFilter,
     memtable::Memtable,
-    record::{Record, RecordHeader},
+    record::{FLAG_HAS_EXPIRY, FLAG_TOMBSTONE, Record, RecordHeader},
+    utils::{is_expired, now_ms},
 };
 
 const BLOOM_BITS_PER_KEY: usize = 10;
@@ -119,20 +120,28 @@ impl SSTable {
         let mut file_offset = 0u64;
         let mut first_key_in_block = None;
 
-        for (key, opt) in memtable.entries().iter() {
-            let (value, tombstone) = match opt {
+        for (key, entry) in memtable.entries().iter() {
+            let (value, tombstone) = match entry.value.as_deref() {
                 Some(v) => (v.to_string(), false),
                 None => (String::new(), true),
             };
             if first_key_in_block.is_none() {
                 first_key_in_block = Some(key.clone());
             }
+            let mut flags = 0u8;
+            if entry.expiry_ms.is_some() {
+                flags |= FLAG_HAS_EXPIRY;
+            }
+            if tombstone {
+                flags |= FLAG_TOMBSTONE;
+            }
             let record = Record {
                 header: RecordHeader {
                     crc32: 0u32,
                     key_size: key.len() as u64,
                     value_size: value.len() as u64,
-                    tombstone,
+                    flags,
+                    expiry_ms: entry.expiry_ms,
                 },
                 key: key.to_string(),
                 value,
@@ -189,13 +198,17 @@ impl SSTable {
             current_block: Vec::new(),
             done: false,
         };
-
+        let now_ms = now_ms();
         for result in iter {
             let record = result?;
             match record.key.as_str().cmp(key) {
                 std::cmp::Ordering::Greater => return Ok(None),
                 std::cmp::Ordering::Equal => {
-                    let value = if record.header.tombstone {
+                    let value = if record.header.is_tombstone() {
+                        None
+                    } else if let Some(expiry_ms) = record.header.expiry_ms
+                        && is_expired(expiry_ms, now_ms)
+                    {
                         None
                     } else {
                         Some(record.value)

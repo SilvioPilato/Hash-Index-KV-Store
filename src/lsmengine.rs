@@ -9,7 +9,9 @@ use std::{
     path::PathBuf,
 };
 
+use crate::engine::TtlOutcome;
 use crate::storage_strategy::StorageStrategy;
+use crate::utils::{is_expired, now_ms};
 use crate::{
     engine::{RangeScan, StorageEngine},
     memtable::Memtable,
@@ -157,22 +159,43 @@ impl Drop for LsmEngine {
 
 impl StorageEngine for LsmEngine {
     fn get(&self, key: &str) -> Result<Option<(String, String)>, std::io::Error> {
+        let now_ms = now_ms();
+
         {
             let memtable = self.shared.active.read().unwrap();
-            match memtable.entry(key) {
-                Some(Some(v)) => return Ok(Some((key.to_string(), v.clone()))),
-                Some(None) => return Ok(None),
-                None => {}
+            if let Some(entry) = memtable.entry(key) {
+                match (entry.value.as_deref(), entry.expiry_ms) {
+                    (Some(_), Some(ms)) if is_expired(ms, now_ms) => {
+                        return Ok(None);
+                    }
+                    (Some(v), _) => {
+                        return Ok(Some((key.to_string(), v.to_string())));
+                    }
+                    (None, _) => {
+                        return Ok(None);
+                    }
+                }
             }
         }
 
         {
             let immutable = self.shared.immutable.read().unwrap();
-            if let Some(memtable) = immutable.as_ref() {
-                match memtable.entry(key) {
-                    Some(Some(v)) => return Ok(Some((key.to_string(), v.clone()))),
-                    Some(None) => return Ok(None),
-                    None => {}
+            if let Some(memtable) = immutable.as_ref()
+                && let Some(entry) = memtable.entry(key)
+            {
+                match (entry.value.as_deref(), entry.expiry_ms) {
+                    (Some(_), Some(ms)) if is_expired(ms, now_ms) => {
+                        return Ok(None);
+                    }
+                    (Some(v), None) => {
+                        return Ok(Some((key.to_string(), v.to_string())));
+                    }
+                    (Some(v), Some(_)) => {
+                        return Ok(Some((key.to_string(), v.to_string())));
+                    }
+                    (None, _) => {
+                        return Ok(None);
+                    }
                 }
             }
         }
@@ -195,8 +218,8 @@ impl StorageEngine for LsmEngine {
         let memtable_size = {
             let mut wal = self.shared.wal.lock().unwrap();
             let mut memtable = self.shared.active.write().unwrap();
-            wal.append(key.to_string(), value.to_string(), false)?;
-            memtable.insert(key.to_string(), value.to_string());
+            wal.append(key.to_string(), value.to_string(), false, None)?;
+            memtable.insert(key.to_string(), value.to_string(), None);
             memtable.size_bytes()
         };
 
@@ -213,7 +236,7 @@ impl StorageEngine for LsmEngine {
         let size_bytes = {
             let mut wal = self.shared.wal.lock().unwrap();
             let mut active = self.shared.active.write().unwrap();
-            wal.append(key.to_string(), String::new(), true)?;
+            wal.append(key.to_string(), String::new(), true, None)?;
             active.remove(key.to_string());
             active.size_bytes()
         };
@@ -293,16 +316,24 @@ impl StorageEngine for LsmEngine {
 
     fn list_keys(&self) -> io::Result<Vec<String>> {
         let mut keys: HashSet<String> = HashSet::new();
+        let now_ms = now_ms();
         {
             let storage_strategy = self.shared.storage_strategy.read().unwrap();
             for segment in storage_strategy.iter_all() {
                 for result in segment.iter()? {
                     let record = result?;
-                    if record.header.tombstone {
+                    if record.header.is_tombstone() {
                         keys.remove(&record.key);
-                    } else {
-                        keys.insert(record.key);
+                        continue;
                     }
+                    if let Some(expiry_ms) = record.header.expiry_ms
+                        && is_expired(expiry_ms, now_ms)
+                    {
+                        keys.remove(&record.key);
+                        continue;
+                    }
+
+                    keys.insert(record.key);
                 }
             }
         }
@@ -310,11 +341,17 @@ impl StorageEngine for LsmEngine {
         {
             let immutable = self.shared.immutable.read().unwrap();
             if let Some(memtable) = immutable.as_ref() {
-                for (key, opt) in memtable.entries() {
-                    if opt.is_some() {
-                        keys.insert(key.clone());
-                    } else {
-                        keys.remove(key);
+                for (key, entry) in memtable.entries() {
+                    match (entry.value.as_deref(), entry.expiry_ms) {
+                        (Some(_), Some(ms)) if is_expired(ms, now_ms) => {
+                            keys.remove(key);
+                        }
+                        (Some(_), _) => {
+                            keys.insert(key.clone());
+                        }
+                        (None, _) => {
+                            keys.remove(key);
+                        }
                     }
                 }
             }
@@ -322,11 +359,17 @@ impl StorageEngine for LsmEngine {
 
         {
             let memtable = self.shared.active.read().unwrap();
-            for (key, opt) in memtable.entries() {
-                if opt.is_some() {
-                    keys.insert(key.clone());
-                } else {
-                    keys.remove(key);
+            for (key, entry) in memtable.entries() {
+                match (entry.value.as_deref(), entry.expiry_ms) {
+                    (Some(_), Some(ms)) if is_expired(ms, now_ms) => {
+                        keys.remove(key);
+                    }
+                    (Some(_), _) => {
+                        keys.insert(key.clone());
+                    }
+                    (None, _) => {
+                        keys.remove(key);
+                    }
                 }
             }
         }
@@ -365,6 +408,44 @@ impl StorageEngine for LsmEngine {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn ttl(&self, key: &str, expiry_ms: Option<u64>) -> io::Result<crate::engine::TtlOutcome> {
+        match self.get(key)? {
+            Some((k, v)) => {
+                self.set_with_ttl(&k, &v, expiry_ms)?;
+                if expiry_ms.is_some() {
+                    Ok(TtlOutcome::Set)
+                } else {
+                    Ok(TtlOutcome::Persisted)
+                }
+            }
+            None => Ok(TtlOutcome::NotFound),
+        }
+    }
+
+    fn set_with_ttl(&self, key: &str, value: &str, expiry_ms: Option<u64>) -> io::Result<()> {
+        let memtable_size = {
+            let mut wal = self.shared.wal.lock().unwrap();
+            let mut memtable = self.shared.active.write().unwrap();
+            wal.append(key.to_string(), value.to_string(), false, expiry_ms)?;
+            memtable.insert(key.to_string(), value.to_string(), expiry_ms);
+            memtable.size_bytes()
+        };
+
+        if memtable_size >= self.shared.max_memtable_bytes.load(Relaxed) {
+            self.flush_memtable_async()?;
+        }
+
+        Ok(())
+    }
+
+    fn mset_with_ttl(&self, items: Vec<(String, String, Option<u64>)>) -> io::Result<()> {
+        for (k, v, expiry_ms) in items {
+            self.set_with_ttl(&k, &v, expiry_ms)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl RangeScan for LsmEngine {
@@ -372,6 +453,8 @@ impl RangeScan for LsmEngine {
         if start > end {
             return Ok(vec![]);
         }
+
+        let now_ms = now_ms();
         let mut b_map: BTreeMap<String, String> = BTreeMap::new();
         {
             let storage_strategy = self.shared.storage_strategy.read().unwrap();
@@ -381,7 +464,15 @@ impl RangeScan for LsmEngine {
                     if record.key.as_str() < start || record.key.as_str() > end {
                         continue;
                     }
-                    if record.header.tombstone {
+
+                    if let Some(expiry_ms) = record.header.expiry_ms
+                        && is_expired(expiry_ms, now_ms)
+                    {
+                        b_map.remove(&record.key);
+                        continue;
+                    }
+
+                    if record.header.is_tombstone() {
                         b_map.remove(&record.key);
                         continue;
                     }
@@ -394,13 +485,14 @@ impl RangeScan for LsmEngine {
         {
             let immutable = self.shared.immutable.read().unwrap();
             if let Some(memtable) = immutable.as_ref() {
-                for (k, v) in memtable
+                for (k, entry) in memtable
                     .entries()
                     .range::<str, _>((Included(start), Included(end)))
                 {
-                    match v {
-                        Some(val) => b_map.insert(k.clone(), val.clone()),
-                        None => b_map.remove(k),
+                    match (entry.value.as_deref(), entry.expiry_ms) {
+                        (Some(_), Some(ms)) if is_expired(ms, now_ms) => b_map.remove(k),
+                        (Some(val), _) => b_map.insert(k.clone(), val.to_string()),
+                        (None, _) => b_map.remove(k),
                     };
                 }
             }
@@ -408,13 +500,14 @@ impl RangeScan for LsmEngine {
 
         {
             let memtable = self.shared.active.read().unwrap();
-            for (k, v) in memtable
+            for (k, entry) in memtable
                 .entries()
                 .range::<str, _>((Included(start), Included(end)))
             {
-                match v {
-                    Some(val) => b_map.insert(k.clone(), val.clone()),
-                    None => b_map.remove(k),
+                match (entry.value.as_deref(), entry.expiry_ms) {
+                    (Some(_), Some(ms)) if is_expired(ms, now_ms) => b_map.remove(k),
+                    (Some(val), _) => b_map.insert(k.clone(), val.to_string()),
+                    (None, _) => b_map.remove(k),
                 };
             }
         }

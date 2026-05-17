@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     memtable::Memtable,
-    record::{Record, RecordHeader},
+    record::{FLAG_HAS_EXPIRY, FLAG_TOMBSTONE, Record, RecordHeader},
 };
 
 pub struct Wal {
@@ -31,13 +31,28 @@ impl Wal {
         })
     }
 
-    pub fn append(&mut self, key: String, value: String, tombstone: bool) -> io::Result<u64> {
+    pub fn append(
+        &mut self,
+        key: String,
+        value: String,
+        tombstone: bool,
+        expiry_ms: Option<u64>,
+    ) -> io::Result<u64> {
+        let mut flags = 0u8;
+        if tombstone {
+            flags |= FLAG_TOMBSTONE;
+        }
+        if expiry_ms.is_some() {
+            flags |= FLAG_HAS_EXPIRY;
+        }
+
         let record = Record {
             header: RecordHeader {
                 crc32: 0,
                 key_size: key.len() as u64,
                 value_size: value.len() as u64,
-                tombstone,
+                flags,
+                expiry_ms,
             },
             key,
             value,
@@ -62,7 +77,7 @@ impl Wal {
                 Err(e) => return Err(e),
             };
 
-            if record.header.tombstone {
+            if record.header.is_tombstone() {
                 memtable.remove(record.key);
                 continue;
             }
@@ -70,7 +85,7 @@ impl Wal {
             let key = record.key;
             let value = record.value;
 
-            memtable.insert(key, value);
+            memtable.insert(key, value, record.header.expiry_ms);
         }
 
         Ok(memtable)

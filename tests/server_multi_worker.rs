@@ -92,7 +92,7 @@ fn many_concurrent_writes_distributed_across_workers() {
                 barrier.wait();
                 let key = format!("k-{}", client_id);
                 let value = format!("v-{}", client_id);
-                let response_bytes = send_one_command(&addr, Command::Write(key, value));
+                let response_bytes = send_one_command(&addr, Command::Write(key, value, None));
                 let response = decode_response_frame(&response_bytes).expect("decode write");
                 assert!(
                     matches!(response.status, ResponseStatus::Ok),

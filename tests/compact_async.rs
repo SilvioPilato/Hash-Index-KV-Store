@@ -101,6 +101,11 @@ fn wait_for_server() {
 fn build_input_frame(op: u8, key: Option<&str>, value: Option<&str>) -> Vec<u8> {
     let mut payload = Cursor::new(Vec::new());
     payload.write_all(&[op]).unwrap();
+    // OpCode::Write (2) frames carry a flags byte after the opcode (TTL wire
+    // format §2.2); 0 = no TTL, no trailing seconds.
+    if op == 2 {
+        payload.write_all(&[0u8]).unwrap();
+    }
     if let Some(k) = key {
         let kb = k.as_bytes();
         payload.write_all(&(kb.len() as u16).to_be_bytes()).unwrap();

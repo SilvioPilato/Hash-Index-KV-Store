@@ -24,7 +24,8 @@ fn make_record(key: &str, value: &str) -> Record {
             crc32: 0,
             key_size: key.len() as u64,
             value_size: value.len() as u64,
-            tombstone: false,
+            flags: 0,
+            expiry_ms: None,
         },
         key: key.to_string(),
         value: value.to_string(),
@@ -157,9 +158,9 @@ fn test_block_roundtrip_compressed() {
 #[test]
 fn test_sstable_from_memtable_blocks() {
     let mut memtable = Memtable::new();
-    memtable.insert("key1".into(), "value1".into());
-    memtable.insert("key2".into(), "value2".into());
-    memtable.insert("key3".into(), "value3".into());
+    memtable.insert("key1".into(), "value1".into(), None);
+    memtable.insert("key2".into(), "value2".into(), None);
+    memtable.insert("key3".into(), "value3".into(), None);
 
     let dir = temp_dir("from_memtable");
     let sstable = SSTable::from_memtable(&dir, "test", &memtable, None, 4096, true).unwrap();
@@ -172,9 +173,9 @@ fn test_sstable_from_memtable_blocks() {
 #[test]
 fn test_sstable_get_from_blocks() {
     let mut memtable = Memtable::new();
-    memtable.insert("alpha".into(), "apple".into());
-    memtable.insert("bravo".into(), "banana".into());
-    memtable.insert("charlie".into(), "cherry".into());
+    memtable.insert("alpha".into(), "apple".into(), None);
+    memtable.insert("bravo".into(), "banana".into(), None);
+    memtable.insert("charlie".into(), "cherry".into(), None);
 
     let dir = temp_dir("get_from_blocks");
     let sstable = SSTable::from_memtable(&dir, "test", &memtable, None, 4096, true).unwrap();
@@ -197,9 +198,9 @@ fn test_sstable_get_from_blocks() {
 #[test]
 fn test_sstable_iter_blocks() {
     let mut memtable = Memtable::new();
-    memtable.insert("x".into(), "1".into());
-    memtable.insert("y".into(), "2".into());
-    memtable.insert("z".into(), "3".into());
+    memtable.insert("x".into(), "1".into(), None);
+    memtable.insert("y".into(), "2".into(), None);
+    memtable.insert("z".into(), "3".into(), None);
 
     let dir = temp_dir("iter_blocks");
     let sstable = SSTable::from_memtable(&dir, "test", &memtable, None, 4096, true).unwrap();
@@ -214,8 +215,8 @@ fn test_sstable_iter_blocks() {
 #[test]
 fn test_sstable_get_missing_key() {
     let mut memtable = Memtable::new();
-    memtable.insert("aaa".into(), "val".into());
-    memtable.insert("bbb".into(), "val".into());
+    memtable.insert("aaa".into(), "val".into(), None);
+    memtable.insert("bbb".into(), "val".into(), None);
 
     let dir = temp_dir("missing_key");
     let sstable = SSTable::from_memtable(&dir, "test", &memtable, None, 4096, true).unwrap();
@@ -227,7 +228,7 @@ fn test_sstable_get_missing_key() {
 fn test_sstable_rebuild_index() {
     let mut memtable = Memtable::new();
     for i in 0..10 {
-        memtable.insert(format!("key{:02}", i), format!("val{}", i));
+        memtable.insert(format!("key{:02}", i), format!("val{}", i), None);
     }
 
     let dir = temp_dir("rebuild_index");

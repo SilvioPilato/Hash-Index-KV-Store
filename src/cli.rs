@@ -15,7 +15,11 @@ pub fn parse_command(line: &str) -> ParseResult {
     match words[0].to_uppercase().as_str() {
         "WRITE" => {
             if words.len() > 2 {
-                ParseResult::Cmd(Command::Write(words[1].to_string(), words[2..].join(" ")))
+                ParseResult::Cmd(Command::Write(
+                    words[1].to_string(),
+                    words[2..].join(" "),
+                    None,
+                ))
             } else {
                 ParseResult::InvalidInput("Usage: WRITE <key> <value>".to_string())
             }
@@ -58,11 +62,11 @@ pub fn parse_command(line: &str) -> ParseResult {
             if words.len() < 3 {
                 ParseResult::InvalidInput("Usage: MSET <key1> <value1> <keyn> <valuen>".to_string())
             } else {
-                let pairs: Vec<(String, String)> = words[1..]
+                let pairs: Vec<(String, String, Option<u32>)> = words[1..]
                     .chunks_exact(2)
                     .filter_map(|chunk| {
                         if let [k, v] = chunk {
-                            Some((k.to_string(), v.to_string()))
+                            Some((k.to_string(), v.to_string(), None))
                         } else {
                             None
                         }
@@ -78,6 +82,223 @@ pub fn parse_command(line: &str) -> ParseResult {
                 ParseResult::InvalidInput("Usage: RANGE <start> <end>".to_string())
             }
         }
-        cmd => ParseResult::InvalidInput(format!("Unknown command: {cmd}")),
+        "TTL" => {
+            if words.len() == 3 {
+                match words[2].parse::<u32>() {
+                    Ok(expiry) => ParseResult::Cmd(Command::Ttl(words[1].to_string(), expiry)),
+                    Err(_) => ParseResult::InvalidInput("Invalid expiry time".to_string()),
+                }
+            } else {
+                ParseResult::InvalidInput("Usage: TTL <key> <seconds>".to_string())
+            }
+        }
+        "WRITETTL" => {
+            if words.len() >= 4 {
+                match words[2].parse::<u32>() {
+                    Ok(0) => ParseResult::InvalidInput(
+                        "Usage: WRITETTL <key> <seconds> <value> (seconds must be >= 1)"
+                            .to_string(),
+                    ),
+                    Ok(expiry) => ParseResult::Cmd(Command::Write(
+                        words[1].to_string(),
+                        words[3..].join(" "),
+                        Some(expiry),
+                    )),
+                    Err(_) => ParseResult::InvalidInput("Invalid expiry time".to_string()),
+                }
+            } else {
+                ParseResult::InvalidInput("Usage: WRITETTL <key> <seconds> <value>".to_string())
+            }
+        }
+        "MWRITETTL" => {
+            if words.len() < 4 || !words[2..].len().is_multiple_of(2) {
+                ParseResult::InvalidInput(
+                    "Usage: MWRITETTL <seconds> <key1> <value1> <keyn> <valuen>".to_string(),
+                )
+            } else {
+                match words[1].parse::<u32>() {
+                    Ok(0) => ParseResult::InvalidInput(
+                        "Usage: MWRITETTL <seconds> <key1> <value1> <keyn> <valuen> \
+                         (seconds must be >= 1)"
+                            .to_string(),
+                    ),
+                    Ok(expiry) => {
+                        let pairs: Vec<(String, String, Option<u32>)> = words[2..]
+                            .chunks_exact(2)
+                            .map(|chunk| (chunk[0].to_string(), chunk[1].to_string(), Some(expiry)))
+                            .collect();
+                        ParseResult::Cmd(Command::Mset(pairs))
+                    }
+                    Err(_) => ParseResult::InvalidInput("Invalid expiry time".to_string()),
+                }
+            }
+        }
+        _ => ParseResult::InvalidInput(format!("Unknown command: {}", words[0])),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cmd(line: &str) -> Command {
+        match parse_command(line) {
+            ParseResult::Cmd(c) => c,
+            ParseResult::Quit => panic!("expected Cmd, got Quit"),
+            ParseResult::InvalidInput(m) => panic!("expected Cmd, got InvalidInput: {m}"),
+        }
+    }
+
+    fn is_invalid(line: &str) -> bool {
+        matches!(parse_command(line), ParseResult::InvalidInput(_))
+    }
+
+    // --- WRITETTL ---
+
+    #[test]
+    fn writettl_happy_space_greedy_value() {
+        match cmd("WRITETTL k 60 hello world") {
+            Command::Write(key, value, ttl) => {
+                assert_eq!(key, "k");
+                assert_eq!(value, "hello world");
+                assert_eq!(ttl, Some(60));
+            }
+            _ => panic!("expected Command::Write"),
+        }
+    }
+
+    #[test]
+    fn writettl_value_with_leading_digit() {
+        match cmd("WRITETTL k 60 5things") {
+            Command::Write(_, value, ttl) => {
+                assert_eq!(value, "5things");
+                assert_eq!(ttl, Some(60));
+            }
+            _ => panic!("expected Command::Write"),
+        }
+    }
+
+    #[test]
+    fn writettl_value_containing_ttl_and_ex_tokens() {
+        match cmd("WRITETTL k 60 EX 5 TTL note") {
+            Command::Write(_, value, ttl) => {
+                assert_eq!(value, "EX 5 TTL note");
+                assert_eq!(ttl, Some(60));
+            }
+            _ => panic!("expected Command::Write"),
+        }
+    }
+
+    #[test]
+    fn writettl_rejects_too_few_tokens() {
+        assert!(is_invalid("WRITETTL k 60"));
+    }
+
+    #[test]
+    fn writettl_rejects_non_numeric_seconds() {
+        assert!(is_invalid("WRITETTL k abc value"));
+    }
+
+    #[test]
+    fn writettl_rejects_zero_seconds() {
+        assert!(is_invalid("WRITETTL k 0 value"));
+    }
+
+    // --- TTL ---
+
+    #[test]
+    fn ttl_happy() {
+        match cmd("TTL k 30") {
+            Command::Ttl(key, seconds) => {
+                assert_eq!(key, "k");
+                assert_eq!(seconds, 30);
+            }
+            _ => panic!("expected Command::Ttl"),
+        }
+    }
+
+    #[test]
+    fn ttl_zero_is_valid_persist() {
+        match cmd("TTL k 0") {
+            Command::Ttl(key, seconds) => {
+                assert_eq!(key, "k");
+                assert_eq!(seconds, 0);
+            }
+            _ => panic!("expected Command::Ttl"),
+        }
+    }
+
+    #[test]
+    fn ttl_rejects_wrong_arity() {
+        assert!(is_invalid("TTL k"));
+        assert!(is_invalid("TTL k 30 extra"));
+    }
+
+    #[test]
+    fn ttl_rejects_non_numeric() {
+        assert!(is_invalid("TTL k abc"));
+    }
+
+    // --- MWRITETTL ---
+
+    #[test]
+    fn mwritettl_happy_uniform_ttl() {
+        match cmd("MWRITETTL 60 k1 v1 k2 v2") {
+            Command::Mset(pairs) => {
+                assert_eq!(
+                    pairs,
+                    vec![
+                        ("k1".to_string(), "v1".to_string(), Some(60)),
+                        ("k2".to_string(), "v2".to_string(), Some(60)),
+                    ]
+                );
+            }
+            _ => panic!("expected Command::Mset"),
+        }
+    }
+
+    #[test]
+    fn mwritettl_rejects_zero_seconds() {
+        assert!(is_invalid("MWRITETTL 0 k1 v1"));
+    }
+
+    #[test]
+    fn mwritettl_rejects_odd_trailing_token() {
+        assert!(is_invalid("MWRITETTL 60 k1 v1 k2"));
+    }
+
+    #[test]
+    fn mwritettl_rejects_too_few_tokens() {
+        assert!(is_invalid("MWRITETTL 60 k1"));
+    }
+
+    // --- Regression: non-TTL verbs carry None ---
+
+    #[test]
+    fn write_carries_none_ttl() {
+        match cmd("WRITE k hello world") {
+            Command::Write(key, value, ttl) => {
+                assert_eq!(key, "k");
+                assert_eq!(value, "hello world");
+                assert_eq!(ttl, None);
+            }
+            _ => panic!("expected Command::Write"),
+        }
+    }
+
+    #[test]
+    fn mset_carries_none_ttl() {
+        match cmd("MSET k1 v1 k2 v2") {
+            Command::Mset(pairs) => {
+                assert_eq!(
+                    pairs,
+                    vec![
+                        ("k1".to_string(), "v1".to_string(), None),
+                        ("k2".to_string(), "v2".to_string(), None),
+                    ]
+                );
+            }
+            _ => panic!("expected Command::Mset"),
+        }
     }
 }

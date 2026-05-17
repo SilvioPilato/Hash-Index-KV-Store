@@ -36,7 +36,8 @@ fn valid_record_roundtrip() {
             crc32: 0,
             key_size: 5,
             value_size: 5,
-            tombstone: false,
+            flags: 0,
+            expiry_ms: None,
         },
         key: "hello".to_string(),
         value: "world".to_string(),
@@ -57,7 +58,8 @@ fn corrupted_value_detected() {
             crc32: 0,
             key_size: 5,
             value_size: 5,
-            tombstone: false,
+            flags: 0,
+            expiry_ms: None,
         },
         key: "hello".to_string(),
         value: "world".to_string(),
@@ -89,20 +91,24 @@ fn corrupted_header_detected() {
             crc32: 0,
             key_size: 5,
             value_size: 5,
-            tombstone: false,
+            flags: 0,
+            expiry_ms: None,
         },
         key: "hello".to_string(),
         value: "world".to_string(),
     };
     record.append(&mut file).unwrap();
 
-    // Flip a byte in the tombstone field (byte at offset CRC_LEN + 16 = 20)
-    let tombstone_offset = 20u64;
-    file.seek(SeekFrom::Start(tombstone_offset)).unwrap();
+    // Flip a byte in the stored CRC32 field (offset 0). Corrupting a framing
+    // field (key_size/value_size/flags) would change how the record parses
+    // before the CRC is ever checked; corrupting the CRC itself isolates the
+    // "header corruption is caught by the checksum" behaviour under test.
+    let crc_offset = 0u64;
+    file.seek(SeekFrom::Start(crc_offset)).unwrap();
     let mut byte = [0u8; 1];
     file.read_exact(&mut byte).unwrap();
     byte[0] ^= 0xFF;
-    file.seek(SeekFrom::Start(tombstone_offset)).unwrap();
+    file.seek(SeekFrom::Start(crc_offset)).unwrap();
     file.write_all(&byte).unwrap();
     file.sync_all().unwrap();
 
