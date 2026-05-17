@@ -7,7 +7,7 @@
 
 ## Problem
 
-The TTL feature ([2026-05-10-ttl-design.md](2026-05-10-ttl-design.md)) extends the `Command` enum (§10): `Write(String, String, Option<u32>)`, `Mset(Vec<(String, String, Option<u32>)>)`, and a new `Ttl(String, u32)`. The interactive client's `parse_command` ([src/cli.rs](../../../src/cli.rs)) currently constructs the old 2-field `Write`/`Mset` and has no TTL surface — the crate does not compile until these call sites are updated, and a human at the REPL has no way to express an expiry.
+The TTL feature ([2026-05-10-ttl-design.md](2026-05-10-ttl-design.md)) extends the `Command` enum (§10): `Write(String, String, Option<u32>)`, `Mset(Vec<(String, String, Option<u32>)>)`, and a new `Ttl(String, u32)`. The interactive client's `parse_command` ([src/cli.rs](../../../src/cli.rs)) currently contains a **broken, half-finished TTL draft** — `WRITETTL` wrongly emits `Command::Ttl` instead of `Command::Write`; it uses an exact-token-count check that truncates space-greedy values; it carries placeholder `Usage: RANGE` error strings; there is no `seconds == 0` rejection; `MWRITETTL` is absent; and the match arms leave the crate non-compiling. **This draft is to be replaced, not extended.** The grammar below specifies the intended end state in full; an implementer should treat the existing partial code as scaffolding to discard.
 
 The central constraint: `WRITE key value` parses the value as `words[2..].join(" ")` — **space-greedy**. Any inline TTL token on `WRITE` is ambiguous with a value that contains that token. The grammar must be *unambiguous* (locked priority — chosen over Redis familiarity and over minimal change).
 
@@ -43,7 +43,7 @@ All other verbs (`READ`, `DELETE`, `EXISTS`, `MGET`, `RANGE`, `COMPACT`, `STATS`
 
 ### Error handling
 
-Each new verb emits a precise `Usage: …` string in the existing `parse_command` style on: insufficient arity, non-numeric `seconds`, `seconds == 0` for `WRITETTL`/`MWRITETTL`, or an odd trailing token for `MWRITETTL`. The `u32::MAX` ceiling falls out of `parse::<u32>()` for free, matching the wire spec's ~136-year cap.
+Each new verb emits a precise `Usage: …` string in the existing `parse_command` style on: insufficient arity, non-numeric `seconds`, `seconds == 0` for `WRITETTL`/`MWRITETTL`, or an odd trailing token for `MWRITETTL`. For **all three verbs** including `TTL`, any `seconds` that is negative, non-numeric, or exceeds `u32::MAX` fails `parse::<u32>()` and takes the same `InvalidInput` rejection path — the `u32::MAX` ceiling thus falls out for free, matching the wire spec's ~136-year cap. (`TTL` accepts exactly `0..=u32::MAX`; only `0` carries the special PERSIST meaning.)
 
 ## Test Plan
 
