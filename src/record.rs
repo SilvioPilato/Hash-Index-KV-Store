@@ -58,9 +58,14 @@ pub struct Record {
 
 impl Record {
     /// Returns the total number of bytes this record occupies on disk
-    /// (header + key + value).
+    /// (header + optional expiry + key + value).
     pub fn size_on_disk(&self) -> u64 {
-        RECORD_HEADER_LEN as u64 + self.header.key_size + self.header.value_size
+        let expiry_len = if self.header.expiry_ms.is_some() {
+            TTL_LEN as u64
+        } else {
+            0
+        };
+        RECORD_HEADER_LEN as u64 + expiry_len + self.header.key_size + self.header.value_size
     }
 
     /// Appends this record to the end of `file`, computing a fresh CRC32
@@ -129,10 +134,24 @@ impl Record {
         file.read_exact(&mut k_buf)?;
         file.read_exact(&mut v_buf)?;
 
-        let mut payload = Vec::with_capacity(header.key_size as usize + header.value_size as usize);
+        let expiry_len = if header.expiry_ms.is_some() {
+            TTL_LEN
+        } else {
+            0
+        };
+        let mut payload = Vec::with_capacity(
+            SIZE_FIELD_LEN * 2
+                + FLAGS_LEN
+                + expiry_len
+                + header.key_size as usize
+                + header.value_size as usize,
+        );
         payload.extend_from_slice(&header.key_size.to_be_bytes());
         payload.extend_from_slice(&header.value_size.to_be_bytes());
         payload.extend_from_slice(&[header.flags]);
+        if let Some(ms) = header.expiry_ms {
+            payload.extend_from_slice(&ms.to_be_bytes());
+        }
         payload.extend_from_slice(&k_buf);
         payload.extend_from_slice(&v_buf);
         let crc32 = crc32(&payload);
@@ -157,11 +176,11 @@ impl Record {
         buf.extend_from_slice(&self.header.key_size.to_be_bytes());
         buf.extend_from_slice(&self.header.value_size.to_be_bytes());
         buf.extend_from_slice(&[self.header.flags]);
-        buf.extend_from_slice(self.key.as_bytes());
-        buf.extend_from_slice(self.value.as_bytes());
         if let Some(ms) = self.header.expiry_ms {
             buf.extend_from_slice(&ms.to_be_bytes());
         }
+        buf.extend_from_slice(self.key.as_bytes());
+        buf.extend_from_slice(self.value.as_bytes());
         let checksum = crc32(&buf[payload_start..]);
         buf[..CRC_LEN].copy_from_slice(&checksum.to_be_bytes());
         buf

@@ -14,6 +14,7 @@ use crate::record::{
 };
 use crate::segment::{Segment, get_segments};
 use crate::settings::FSyncStrategy;
+use crate::utils::{is_expired, now_ms};
 use crate::wal::Wal;
 use crate::worker::BackgroundWorker;
 
@@ -32,9 +33,145 @@ pub struct KVEngine {
     segment_count: AtomicUsize,
 }
 
-struct ActiveFileState {
+pub(crate) struct ActiveFileState {
     file: File,
     fsync_handle: Option<BackgroundWorker>,
+}
+
+/// Lock-free read resolution for the Bitcask-style engine: index → segment file.
+///
+/// Borrows state directly (never `&self`), so it cannot acquire a lock — std
+/// `Mutex`/`RwLock` re-entrancy is structurally impossible. Returns the live
+/// value, or `None` if the key is absent or expired (expiry filtering matches
+/// the LSM `lookup`: expired ⇒ logically absent).
+pub(crate) fn kv_lookup(
+    index: &HashIndex,
+    db_path: &str,
+    db_name: &str,
+    active_segment: &Segment,
+    key: &str,
+    now_ms: u64,
+) -> io::Result<Option<String>> {
+    let entry = match index.get(key) {
+        Some(e) => e,
+        None => return Ok(None),
+    };
+    if entry.expiry_ms.is_some_and(|e| is_expired(e, now_ms)) {
+        return Ok(None);
+    }
+
+    let mut file = if entry.segment_timestamp == active_segment.timestamp {
+        File::open(active_segment.path(db_path))?
+    } else {
+        let seg = Segment {
+            segment_name: db_name.to_string(),
+            timestamp: entry.segment_timestamp,
+        };
+        File::open(seg.path(db_path))?
+    };
+    file.seek(SeekFrom::Start(entry.offset))?;
+    let record = Record::read_next(&mut file)?;
+    Ok(Some(record.value))
+}
+
+/// Lock-free segment roll. Operates on already-held guard state and the
+/// caller's WAL guard — it never calls `self.wal.lock()`, so it can neither
+/// re-enter the WAL mutex (the latent `ttl`-rolls self-deadlock) nor invert
+/// the canonical order against `compact` (the old `set`-rolls ABBA).
+fn roll_active(
+    wal: &mut Wal,
+    active_file: &mut ActiveFileState,
+    active_segment: &mut Segment,
+    db_path: &str,
+    db_name: &str,
+    fsync_strategy: FSyncStrategy,
+    segment_count: &AtomicUsize,
+) -> io::Result<()> {
+    // Ensure the old segment is durable before resetting the WAL.
+    active_file.file.sync_all()?;
+    active_file.fsync_handle.take();
+
+    let segment = Segment::new(db_name).map_err(io::Error::other)?;
+    let file: File = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(segment.path(db_path))?;
+
+    let segment_path = segment.path(db_path);
+    *active_file = ActiveFileState {
+        file,
+        fsync_handle: KVEngine::spawn_fsync_worker(fsync_strategy, segment_path),
+    };
+    *active_segment = segment;
+    wal.reset()?;
+    segment_count.fetch_add(1, Relaxed);
+    Ok(())
+}
+
+/// Lock-free value write: WAL append → segment append (rolling first if the
+/// active segment would overflow) → index update. Borrows guard state directly,
+/// so the whole read-modify-write of `ttl` can run under one held lock span
+/// without any helper re-locking `self`.
+///
+/// Returns `(new_record_size, replaced_old_record_size)` so the caller can
+/// update the dead/total byte counters *after* releasing the locks.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn kv_append(
+    wal: &mut Wal,
+    active_file: &mut ActiveFileState,
+    active_segment: &mut Segment,
+    index: &mut HashIndex,
+    db_path: &str,
+    db_name: &str,
+    max_segment_bytes: u64,
+    fsync_strategy: FSyncStrategy,
+    segment_count: &AtomicUsize,
+    key: &str,
+    value: &str,
+    expiry_ms: Option<u64>,
+) -> io::Result<(u64, Option<u64>)> {
+    wal.append(key.to_string(), value.to_string(), false, expiry_ms)?;
+
+    let record = Record {
+        header: RecordHeader {
+            crc32: 0u32,
+            key_size: key.len() as u64,
+            value_size: value.len() as u64,
+            flags: if expiry_ms.is_some() {
+                FLAG_HAS_EXPIRY
+            } else {
+                0
+            },
+            expiry_ms,
+        },
+        key: key.to_string(),
+        value: value.to_string(),
+    };
+
+    let seg_size = active_file.file.seek(SeekFrom::End(0))?;
+    if max_segment_bytes < seg_size + record.size_on_disk() {
+        roll_active(
+            wal,
+            active_file,
+            active_segment,
+            db_path,
+            db_name,
+            fsync_strategy,
+            segment_count,
+        )?;
+    }
+
+    let offset = record.append(&mut active_file.file)?;
+    let timestamp = active_segment.timestamp;
+    let new_size = record.size_on_disk();
+
+    let replaced = index
+        .set(key.to_string(), offset, timestamp, new_size, expiry_ms)
+        .map(|old| old.record_size);
+
+    Ok((new_size, replaced))
 }
 
 impl KVEngine {
@@ -111,7 +248,13 @@ impl KVEngine {
                 Ok(hints) => {
                     hints.iter().for_each(|entry| {
                         if !entry.tombstone {
-                            hash_index.set(entry.key.clone(), entry.offset, segment.timestamp, 0);
+                            hash_index.set(
+                                entry.key.clone(),
+                                entry.offset,
+                                segment.timestamp,
+                                0,
+                                entry.expiry_ms,
+                            );
                         }
                     });
                 }
@@ -151,6 +294,7 @@ impl KVEngine {
                         offset,
                         segment.timestamp,
                         record.size_on_disk(),
+                        entry.expiry_ms,
                     );
                     size += record.size_on_disk();
                 }
@@ -208,17 +352,29 @@ impl KVEngine {
             self.max_segment_bytes.load(Relaxed),
             self.fsync_strategy,
         )?;
-        let keys: Vec<String> = {
+        let now = now_ms();
+        let keys_with_expiry: Vec<(String, Option<u64>)> = {
             let index_lock = self.index.read().unwrap();
-            index_lock.ls_keys().cloned().collect()
+            index_lock
+                .ls_keys()
+                .filter_map(|k| {
+                    let entry = index_lock.get(k).unwrap();
+                    // Drop expired keys during compaction
+                    if entry.expiry_ms.is_some_and(|e| is_expired(e, now)) {
+                        None
+                    } else {
+                        Some((k.clone(), entry.expiry_ms))
+                    }
+                })
+                .collect()
         };
 
-        for k in keys {
-            let value = match self.get(&k)? {
+        for (k, expiry_ms) in &keys_with_expiry {
+            let value = match self.get(k)? {
                 Some((_, value)) => value,
                 None => continue,
             };
-            new_db.set(&k, &value)?;
+            new_db.set_with_ttl(k, &value, *expiry_ms)?;
         }
 
         {
@@ -243,6 +399,7 @@ impl KVEngine {
                                 key_size: k.len() as u64,
                                 offset: entry.offset,
                                 tombstone: false,
+                                expiry_ms: entry.expiry_ms,
                                 key: k.clone(),
                             })
                         } else {
@@ -257,41 +414,6 @@ impl KVEngine {
         // Don't delete old segments here — compact() deletes them
         // after swapping the index, so concurrent readers are safe.
         Ok((new_db, old_segments))
-    }
-
-    /// Closes the current active segment and opens a new one.
-    /// Caller must hold both locks and pass them in.
-    fn roll_segment(
-        &self,
-        active_file_lock: &mut ActiveFileState,
-        active_segment_lock: &mut Segment,
-    ) -> io::Result<()> {
-        // Ensure old segment is durable before resetting WAL
-        active_file_lock.file.sync_all()?;
-        active_file_lock.fsync_handle.take();
-
-        let segment = Segment::new(&self.db_name).map_err(io::Error::other)?;
-        let file: File = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(segment.path(&self.db_path))?;
-
-        let segment_path = segment.path(&self.db_path);
-        *active_file_lock = ActiveFileState {
-            file,
-            fsync_handle: Self::spawn_fsync_worker(self.fsync_strategy, segment_path),
-        };
-        *active_segment_lock = segment;
-
-        {
-            let mut wal = self.wal.lock().unwrap();
-            wal.reset()?
-        }
-
-        self.segment_count.fetch_add(1, Relaxed);
-        Ok(())
     }
 
     /// Spawns a background worker that periodically fsyncs the given segment file.
@@ -381,35 +503,23 @@ impl StorageEngine for KVEngine {
     ///
     /// Returns `Ok(None)` if the key is not in the index.
     fn get(&self, key: &str) -> Result<Option<(String, String)>, Error> {
-        let active_segment = self.active_segment.lock().unwrap();
+        let now = now_ms();
+        // Snapshot the active segment, then drop its lock; hold the index
+        // read lock across kv_lookup's file I/O so compact() cannot swap the
+        // index and delete old segment files mid-read.
+        let active_segment = self.active_segment.lock().unwrap().clone();
         let index = self.index.read().unwrap();
-        let entry = match index.get(key) {
-            Some(o) => o,
-            None => return Ok(None),
-        };
-
-        let segment_offset = entry.offset;
-        let segment_timestamp = entry.segment_timestamp;
-        let active_timestamp = active_segment.timestamp;
-        let active_path = active_segment.path(&self.db_path);
-        drop(active_segment);
-
-        // Hold index read lock across file I/O so compact() cannot
-        // swap the index and delete old segment files while we read.
-        let mut file = if segment_timestamp == active_timestamp {
-            File::open(active_path)?
-        } else {
-            let segment = Segment {
-                segment_name: self.db_name.clone(),
-                timestamp: segment_timestamp,
-            };
-            File::open(segment.path(&self.db_path))?
-        };
-        drop(index);
-        file.seek(SeekFrom::Start(segment_offset))?;
-        let record = Record::read_next(&mut file)?;
-
-        Ok(Some((record.key, record.value)))
+        match kv_lookup(
+            &index,
+            &self.db_path,
+            &self.db_name,
+            &active_segment,
+            key,
+            now,
+        )? {
+            Some(value) => Ok(Some((key.to_string(), value))),
+            None => Ok(None),
+        }
     }
 
     /// Inserts or updates a key-value pair in the database.
@@ -428,43 +538,33 @@ impl StorageEngine for KVEngine {
             ));
         }
 
-        {
+        // Canonical lock order: wal → active_file → active_segment → index.
+        // Held across kv_append (incl. any roll, which reuses the wal guard).
+        let (new_size, replaced) = {
             let mut wal = self.wal.lock().unwrap();
-            wal.append(key.to_string(), value.to_string(), false, None)?;
-        }
-
-        let record = Record {
-            header: RecordHeader {
-                crc32: 0u32,
-                key_size: key.len() as u64,
-                value_size: value.len() as u64,
-                flags: 0u8,
-                expiry_ms: None,
-            },
-            key: key.to_string(),
-            value: value.to_string(),
-        };
-
-        let (offset, timestamp) = {
             let mut active_file = self.active_file.lock().unwrap();
             let mut active_segment = self.active_segment.lock().unwrap();
-
-            let seg_size = active_file.file.seek(SeekFrom::End(0))?;
-
-            if self.max_segment_bytes.load(Relaxed) < seg_size + record.size_on_disk() {
-                self.roll_segment(&mut active_file, &mut active_segment)?;
-            }
-
-            let offset = record.append(&mut active_file.file)?;
-            (offset, active_segment.timestamp)
+            let mut index = self.index.write().unwrap();
+            kv_append(
+                &mut wal,
+                &mut active_file,
+                &mut active_segment,
+                &mut index,
+                &self.db_path,
+                &self.db_name,
+                self.max_segment_bytes.load(Relaxed),
+                self.fsync_strategy,
+                &self.segment_count,
+                key,
+                value,
+                None,
+            )?
         };
 
-        let mut index = self.index.write().unwrap();
-        if let Some(old) = index.set(key.to_string(), offset, timestamp, record.size_on_disk()) {
-            self.dead_bytes.fetch_add(old.record_size, Relaxed);
+        if let Some(old_size) = replaced {
+            self.dead_bytes.fetch_add(old_size, Relaxed);
         }
-        drop(index);
-        self.total_bytes.fetch_add(record.size_on_disk(), Relaxed);
+        self.total_bytes.fetch_add(new_size, Relaxed);
         self.fsync()?;
 
         Ok(())
@@ -475,6 +575,13 @@ impl StorageEngine for KVEngine {
     /// Removes the key from the in-memory index and appends a tombstone
     /// record to the active segment. Returns `Ok(None)` if the key was not
     /// present.
+    ///
+    /// Concurrency: `delete` acquires `wal`, `index`, and `active_file` in
+    /// three independent acquire-use-drop blocks and never holds two of them
+    /// simultaneously, so the canonical lock order (which governs only nested
+    /// holds) does not apply here — there is no ordering or atomicity hazard
+    /// against `compact`/`ttl`. It is therefore intentionally left outside the
+    /// kv_lookup/kv_append orchestration.
     fn delete(&self, key: &str) -> Result<Option<()>, Error> {
         if key.len() > MAX_KEY_SIZE {
             return Err(Error::new(
@@ -533,11 +640,25 @@ impl StorageEngine for KVEngine {
     }
 
     fn list_keys(&self) -> io::Result<Vec<String>> {
-        Ok(self.index.read().unwrap().ls_keys().cloned().collect())
+        let now = now_ms();
+        let index = self.index.read().unwrap();
+        Ok(index
+            .ls_keys()
+            .filter(|k| {
+                !index
+                    .get(k)
+                    .is_some_and(|e| e.expiry_ms.is_some_and(|exp| is_expired(exp, now)))
+            })
+            .cloned()
+            .collect())
     }
 
     fn exists(&self, key: &str) -> bool {
-        self.index.read().unwrap().contains(key)
+        let index = self.index.read().unwrap();
+        match index.get(key) {
+            Some(e) => !e.expiry_ms.is_some_and(|exp| is_expired(exp, now_ms())),
+            None => false,
+        }
     }
 
     fn mget(&self, keys: Vec<String>) -> Result<Vec<(String, Option<String>)>, std::io::Error> {
@@ -569,16 +690,57 @@ impl StorageEngine for KVEngine {
     }
 
     fn ttl(&self, key: &str, expiry_ms: Option<u64>) -> io::Result<crate::engine::TtlOutcome> {
-        match self.get(key)? {
-            Some((k, v)) => {
-                self.set_with_ttl(&k, &v, expiry_ms)?;
+        // Atomic read-modify-write. Canonical lock order
+        // (wal → active_file → active_segment → index) held across BOTH
+        // kv_lookup and kv_append, so no concurrent writer can slip between
+        // the read and the re-append (the lost-update / resurrection race).
+        let now = now_ms();
+        let written = {
+            let mut wal = self.wal.lock().unwrap();
+            let mut active_file = self.active_file.lock().unwrap();
+            let mut active_segment = self.active_segment.lock().unwrap();
+            let mut index = self.index.write().unwrap();
+
+            match kv_lookup(
+                &index,
+                &self.db_path,
+                &self.db_name,
+                &active_segment,
+                key,
+                now,
+            )? {
+                None => None,
+                Some(value) => Some(kv_append(
+                    &mut wal,
+                    &mut active_file,
+                    &mut active_segment,
+                    &mut index,
+                    &self.db_path,
+                    &self.db_name,
+                    self.max_segment_bytes.load(Relaxed),
+                    self.fsync_strategy,
+                    &self.segment_count,
+                    key,
+                    &value,
+                    expiry_ms,
+                )?),
+            }
+        };
+
+        match written {
+            None => Ok(TtlOutcome::NotFound),
+            Some((new_size, replaced)) => {
+                if let Some(old_size) = replaced {
+                    self.dead_bytes.fetch_add(old_size, Relaxed);
+                }
+                self.total_bytes.fetch_add(new_size, Relaxed);
+                self.fsync()?;
                 if expiry_ms.is_some() {
                     Ok(TtlOutcome::Set)
                 } else {
                     Ok(TtlOutcome::Persisted)
                 }
             }
-            None => Ok(TtlOutcome::NotFound),
         }
     }
 
@@ -590,47 +752,32 @@ impl StorageEngine for KVEngine {
             ));
         }
 
-        {
+        // Canonical lock order: wal → active_file → active_segment → index.
+        let (new_size, replaced) = {
             let mut wal = self.wal.lock().unwrap();
-            wal.append(key.to_string(), value.to_string(), false, expiry_ms)?;
-        }
-
-        let record = Record {
-            header: RecordHeader {
-                crc32: 0u32,
-                key_size: key.len() as u64,
-                value_size: value.len() as u64,
-                flags: if expiry_ms.is_some() {
-                    FLAG_HAS_EXPIRY
-                } else {
-                    0
-                },
-                expiry_ms,
-            },
-            key: key.to_string(),
-            value: value.to_string(),
-        };
-
-        let (offset, timestamp) = {
             let mut active_file = self.active_file.lock().unwrap();
             let mut active_segment = self.active_segment.lock().unwrap();
-
-            let seg_size = active_file.file.seek(SeekFrom::End(0))?;
-
-            if self.max_segment_bytes.load(Relaxed) < seg_size + record.size_on_disk() {
-                self.roll_segment(&mut active_file, &mut active_segment)?;
-            }
-
-            let offset = record.append(&mut active_file.file)?;
-            (offset, active_segment.timestamp)
+            let mut index = self.index.write().unwrap();
+            kv_append(
+                &mut wal,
+                &mut active_file,
+                &mut active_segment,
+                &mut index,
+                &self.db_path,
+                &self.db_name,
+                self.max_segment_bytes.load(Relaxed),
+                self.fsync_strategy,
+                &self.segment_count,
+                key,
+                value,
+                expiry_ms,
+            )?
         };
 
-        let mut index = self.index.write().unwrap();
-        if let Some(old) = index.set(key.to_string(), offset, timestamp, record.size_on_disk()) {
-            self.dead_bytes.fetch_add(old.record_size, Relaxed);
+        if let Some(old_size) = replaced {
+            self.dead_bytes.fetch_add(old_size, Relaxed);
         }
-        drop(index);
-        self.total_bytes.fetch_add(record.size_on_disk(), Relaxed);
+        self.total_bytes.fetch_add(new_size, Relaxed);
         self.fsync()?;
 
         Ok(())

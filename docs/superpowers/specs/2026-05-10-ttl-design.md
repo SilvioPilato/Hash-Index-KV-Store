@@ -301,6 +301,26 @@ Command::Ttl(key, seconds) => {
 
 Note: `Command::Ttl` keeps `u32` seconds (matches the wire). The `0 = PERSIST` rule lives at this layer, not in the engine.
 
+### 11. Concurrency — atomic TTL and canonical lock order
+
+`TTL <key> <seconds>` is a read-modify-write (resolve the current value, then re-append it with a new expiry). Done naively as `get` then `set_with_ttl`, a concurrent writer can interleave between the two and be lost, or an expired/deleted key can be resurrected. Both engines therefore make `ttl` **atomic**: the value resolution and the re-append happen under a single, uninterrupted lock span.
+
+This is achieved by **lock/logic separation** — pure, lock-free helpers that borrow guard state directly (never `&self`), so they *cannot* acquire a lock and std `Mutex`/`RwLock` re-entrancy is structurally impossible. Public methods do all locking, in one canonical order, then delegate:
+
+- **LSM** (`src/lsmengine.rs`): `lookup` (active → immutable → SSTable, expiry/tombstone filtered) and `apply_write` (WAL append + memtable mutation). `get`/`set`/`set_with_ttl`/`delete`/`ttl` orchestrate.
+- **KV** (`src/kvengine.rs`): `kv_lookup` (index → segment file, expiry filtered), `roll_active` (lock-free segment roll using the caller's WAL guard), and `kv_append` (WAL append → segment append/roll → index update). `get`/`set`/`set_with_ttl`/`ttl` orchestrate.
+
+**Canonical lock order (as shipped — every nested multi-lock site MUST match):**
+
+- **LSM:** `flush_handle → wal → active → immutable → storage_strategy`. Derived from and verified against `compact`; `ttl` holds `wal → active → immutable → storage_strategy` across `lookup` + `apply_write`. (Acquisition order ≠ usage order: once held, helpers may read the guards in any logical order.)
+- **KV:** `wal → active_file → active_segment → index`. `compact`, `ttl`, `set`, and `set_with_ttl` all hold this order across `kv_append` (including any segment roll, which reuses the held WAL guard rather than re-locking it).
+
+Lock-order notes:
+
+- KV `roll_active` takes `&mut Wal` by parameter. The earlier `roll_segment` re-acquired `self.wal` internally, which (a) self-deadlocked when `ttl` rolled while holding the WAL lock, and (b) created an ABBA inversion (`active_file → active_segment → wal`) against `compact`'s `wal → active_file → …`. Routing the roll through the caller's guard removes both hazards by construction.
+- KV `delete` acquires `wal`, `index`, and `active_file` in three independent acquire-use-drop blocks and never holds two simultaneously. The canonical order governs only *nested* holds, so `delete` is correct as-is and is intentionally left outside the helper orchestration.
+- A wrong order trades a re-entrancy deadlock for an intermittent lock-order deadlock against `compact` — strictly worse. The TTL test suites include deadlock regression tests (`deadlock_regression_compact_vs_ttl`, `ttl_and_compact_do_not_deadlock`) that hang under CI timeout if the order is violated.
+
 ## Test Plan
 
 New test files in [tests/](../../../tests/):

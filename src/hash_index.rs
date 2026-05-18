@@ -15,6 +15,7 @@ pub struct IndexEntry {
     pub segment_timestamp: u64,
     pub offset: u64,
     pub record_size: u64,
+    pub expiry_ms: Option<u64>,
 }
 
 impl HashIndex {
@@ -41,11 +42,13 @@ impl HashIndex {
         file_location: u64,
         segment_timestamp: u64,
         record_size: u64,
+        expiry_ms: Option<u64>,
     ) -> Option<IndexEntry> {
         let entry = IndexEntry {
             segment_timestamp,
             offset: file_location,
             record_size,
+            expiry_ms,
         };
         self.hashmap.insert(key, entry)
     }
@@ -77,11 +80,13 @@ impl HashIndex {
                 hashmap.remove(&record.key);
                 continue;
             }
+            let expiry_ms = header.expiry_ms;
             let key = record.key;
             let entry = IndexEntry {
                 segment_timestamp,
                 offset,
                 record_size: 0,
+                expiry_ms,
             };
             hashmap.insert(key, entry);
         }
@@ -106,11 +111,13 @@ impl HashIndex {
                 self.hashmap.remove(&record.key);
                 continue;
             }
+            let expiry_ms = header.expiry_ms;
             let key = record.key;
             let entry = IndexEntry {
                 segment_timestamp,
                 offset,
                 record_size: 0,
+                expiry_ms,
             };
             self.hashmap.insert(key, entry);
         }
