@@ -17,7 +17,7 @@ fn temp_db_path(suffix: &str) -> String {
 
 #[test]
 fn set_and_get() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("set_get"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -43,7 +43,7 @@ fn get_missing_key() {
 
 #[test]
 fn set_overwrite() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("overwrite"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -58,7 +58,7 @@ fn set_overwrite() {
 
 #[test]
 fn compact_preserves_values() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("preserve"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -78,7 +78,7 @@ fn compact_preserves_values() {
 
 #[test]
 fn compact_keeps_latest_value() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("latest"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -96,7 +96,7 @@ fn compact_keeps_latest_value() {
 
 #[test]
 fn compact_drops_deleted_keys() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("deleted"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -113,7 +113,7 @@ fn compact_drops_deleted_keys() {
 
 #[test]
 fn compact_is_idempotent() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("idempotent"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -136,7 +136,7 @@ fn compact_is_idempotent() {
 fn segment_rolls_when_full() {
     // Use a tiny limit so that a second write triggers a new segment
     let path = temp_db_path("roll");
-    let mut db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
+    let db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
 
@@ -151,7 +151,7 @@ fn segment_rolls_when_full() {
 fn from_dir_loads_all_segments() {
     let path = temp_db_path("from_dir_multi");
     {
-        let mut db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
+        let db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
         db.set("k1", "value_one").unwrap();
         db.set("k2", "value_two").unwrap();
     }
@@ -169,7 +169,7 @@ fn from_dir_loads_all_segments() {
 #[test]
 fn compact_merges_segments() {
     let path = temp_db_path("compact_merge");
-    let mut db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
+    let db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
     db.set("k1", "updated").unwrap();
@@ -183,7 +183,7 @@ fn compact_merges_segments() {
 
 #[test]
 fn sync_never_writes_are_readable() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("sync_never"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -200,7 +200,7 @@ fn sync_never_writes_are_readable() {
 
 #[test]
 fn sync_every_n_writes_are_readable() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("sync_every_n"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -218,7 +218,7 @@ fn sync_every_n_writes_are_readable() {
 
 #[test]
 fn sync_never_delete_works() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("sync_never_del"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -233,7 +233,7 @@ fn sync_never_delete_works() {
 #[test]
 fn sync_every_n_compaction_preserves_data() {
     let path = temp_db_path("sync_every_n_compact");
-    let mut db = KVEngine::new(&path, "test", 50, FSyncStrategy::EveryN(2)).unwrap();
+    let db = KVEngine::new(&path, "test", 50, FSyncStrategy::EveryN(2)).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
     db.set("k1", "updated").unwrap();
@@ -247,7 +247,7 @@ fn sync_every_n_compaction_preserves_data() {
 
 #[test]
 fn concurrent_reads_return_correct_values() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("concurrent_reads"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -302,7 +302,7 @@ fn concurrent_reads_return_correct_values() {
 
 #[test]
 fn list_keys_returns_all_live_keys() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("list_keys"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -320,7 +320,7 @@ fn list_keys_returns_all_live_keys() {
 
 #[test]
 fn list_keys_excludes_deleted_keys() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("list_keys_delete"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -339,7 +339,7 @@ fn list_keys_excludes_deleted_keys() {
 
 #[test]
 fn list_keys_deduplicates_overwritten_keys() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("list_keys_overwrite"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -367,7 +367,7 @@ fn list_keys_empty_db() {
 
 #[test]
 fn exists_returns_true_after_set() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("exists_true"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -392,7 +392,7 @@ fn exists_returns_false_for_missing_key() {
 
 #[test]
 fn exists_returns_false_after_delete() {
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &temp_db_path("exists_delete"),
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -526,9 +526,9 @@ fn concurrent_delete_and_read() {
                 for _ in 0..100 {
                     for i in 0..100 {
                         let key = format!("k{i}");
-                        match db.get(&key).unwrap() {
-                            Some((_, v)) => assert_eq!(v, format!("v{i}")),
-                            None => {} // deleted, fine
+                        // None is fine here — the key may have been deleted.
+                        if let Some((_, v)) = db.get(&key).unwrap() {
+                            assert_eq!(v, format!("v{i}"));
                         }
                     }
                 }

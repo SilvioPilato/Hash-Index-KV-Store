@@ -32,20 +32,18 @@ impl ServerProcess {
         let start = Instant::now();
         let timeout = Duration::from_secs(3);
         let addr = loop {
-            if Path::new(&addr_file).exists() {
-                if let Ok(content) = fs::read_to_string(&addr_file) {
-                    eprintln!("Found address: {}", content.trim());
-                    break content.trim().to_string();
-                }
+            if Path::new(&addr_file).exists()
+                && let Ok(content) = fs::read_to_string(&addr_file)
+            {
+                eprintln!("Found address: {}", content.trim());
+                break content.trim().to_string();
             }
             if start.elapsed() > timeout {
                 eprintln!("Timeout: address file not found");
                 eprintln!("Directory contents:");
                 if let Ok(entries) = fs::read_dir(db_path) {
-                    for entry in entries {
-                        if let Ok(entry) = entry {
-                            eprintln!("  {}", entry.path().display());
-                        }
+                    for entry in entries.flatten() {
+                        eprintln!("  {}", entry.path().display());
                     }
                 }
                 panic!("Server did not provide address within timeout");
@@ -76,7 +74,7 @@ fn test_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 thread_local! {
-    static SERVER_ADDR: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+    static SERVER_ADDR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
 fn set_server_addr(addr: String) {

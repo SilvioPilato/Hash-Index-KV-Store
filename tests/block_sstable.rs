@@ -96,7 +96,7 @@ fn test_block_writer_exceeds_target_size() {
 
     let mut block_produced = false;
     for _ in 0..20 {
-        if let Some(_) = writer.add_record(&record).unwrap() {
+        if writer.add_record(&record).unwrap().is_some() {
             block_produced = true;
             break;
         }

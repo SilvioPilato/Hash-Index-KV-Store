@@ -72,7 +72,7 @@ fn worker_drop_returns_immediately() {
 fn periodic_fsync_db_writes_are_readable() {
     let path = temp_db_path("periodic_rw");
 
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &path,
         "test",
         1_048_576,
@@ -90,7 +90,7 @@ fn periodic_fsync_survives_segment_roll() {
     let path = temp_db_path("periodic_roll");
 
     // Tiny segment size to force a roll
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &path,
         "test",
         50,
