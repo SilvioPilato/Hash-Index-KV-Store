@@ -1,10 +1,6 @@
 # In Progress
 
-## #56 — `TTL` command
-
-Add a `TTL <key> <seconds>` TCP command that associates an expiry timestamp with a key. Expired keys are invisible to reads and cleaned up during compaction. Requires storing the expiry alongside the value in the record format (or as a separate metadata field). Good exercise in extending the on-disk format and compaction logic.
-
-Spec: `docs/superpowers/specs/2026-05-10-ttl-design.md`
+_None._
 
 # Open Tasks
 
@@ -109,6 +105,14 @@ Extend the block-based SSTable format (from #29) with per-block integrity checks
 Comprehensive evaluation of optimization strategies for block-based compression (from #29). Implement and benchmark: (1) block-level decompression caching (LRU in-memory cache), (2) lazy decompression (only decompress blocks on key access), (3) parallel decompression for range scans (decompress multiple blocks concurrently), (4) SIMD optimization for LZ77 match-finding and copying, (5) prefetching for sequential reads. Measure latency, throughput, and memory overhead against baseline. Generate comparison report. Depends on #29. Low priority—exploratory task to understand real-world performance gains and tradeoffs.
 
 # Closed Tasks
+
+## #56 — `TTL` command
+
+Per-key TTL across both engines: `TTL <key> <seconds>`, `WRITETTL`, `MWRITETTL`, and expiring `WRITE`/`MSET`. Additive `expiry_ms` in the record/WAL/hint formats and the KV hash index; expired keys are logically absent on all read paths and dropped at compaction (survivor TTL preserved). `ttl` is an atomic read-modify-write in both engines via lock-free helpers (LSM `lookup`/`apply_write`; KV `kv_lookup`/`kv_append`/`roll_active`) orchestrated under one canonical lock span — which also fixed a latent KV deadlock where `roll_segment` re-acquired the WAL lock (self-deadlock on `ttl`-rolls; ABBA vs `compact`). Spec gained a Concurrency section documenting the as-shipped canonical lock orders. New suites `kv_ttl`/`lsm_ttl`/`lsm_ttl_atomic`/`ttl_command` incl. lost-update and compact-vs-`ttl` deadlock regression tests. Full suite 317 passed / 0 failed. Deferred follow-ups: expiry stats (#79-adjacent), size-tiered partial-merge tombstone GC (#82), `Clock` trait (#81).
+
+Spec: `docs/superpowers/specs/2026-05-10-ttl-design.md`
+
+PR: <https://github.com/SilvioPilato/rustikv/pull/43>
 
 ## #72 — Set `TCP_NODELAY` on accepted connections
 
