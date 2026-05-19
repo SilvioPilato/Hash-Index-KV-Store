@@ -15,14 +15,14 @@ fn feed_complete_ping_yields_one_command_continue() {
 
 #[test]
 fn feed_complete_write_yields_command_with_payload() {
-    let bytes = encode_command(Command::Write("k".to_string(), "v".to_string()));
+    let bytes = encode_command(Command::Write("k".to_string(), "v".to_string(), None));
     let mut parser = FrameParser::new();
 
     let (cmds, action) = parser.feed(&bytes).expect("feed");
 
     assert_eq!(cmds.len(), 1);
     match &cmds[0] {
-        Command::Write(k, v) => {
+        Command::Write(k, v, _) => {
             assert_eq!(k, "k");
             assert_eq!(v, "v");
         }
@@ -129,7 +129,7 @@ fn feed_empty_chunk_is_a_noop() {
 #[test]
 fn feed_partial_then_complete_frame_decodes_correctly() {
     // Verifies state survives across calls: AwaitingLength -> AwaitingBody -> AwaitingLength
-    let bytes = encode_command(Command::Write("k".to_string(), "v".to_string()));
+    let bytes = encode_command(Command::Write("k".to_string(), "v".to_string(), None));
     let mut parser = FrameParser::new();
 
     // Feed just the 4-byte length prefix

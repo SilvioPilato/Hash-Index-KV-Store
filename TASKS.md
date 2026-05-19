@@ -1,6 +1,12 @@
 # In Progress
 
+_None._
+
 # Open Tasks
+
+## #82 — Size-tiered: reclaim tombstones in partial bucket merges via cross-bucket overlap check
+
+`SizeTiered::compact_if_needed` ([src/size_tiered.rs](src/size_tiered.rs)) deliberately performs **no** tombstone GC: an unconditional `drop_tombstones()` there was a resurrection bug (a tombstone can shadow an older still-live value in a *different* bucket that the partial per-bucket merge does not consume; dropping it lets that value resurface on read). It was removed under #56 (TTL), so all tombstone — and expired-record-downgraded-to-tombstone — reclamation now happens only in `compact_all`, which merges every bucket and is the sole sound GC point. The cost: between full compactions, tombstones and expired-key bytes accumulate across partial merges (space/tombstone amplification). For the telemetry workload (#56's primary use case — high volume of short-TTL keys) this makes compaction-driven reclamation weak, since `compact_all` is a heavyweight full rewrite that runs rarely. Implement Cassandra STCS-style conditional tombstone GC: in a partial bucket merge, a tombstone may be dropped only when no segment in any *other* bucket can contain that key — checked via the per-segment bloom filter plus min/max key range. Restore conditional reclamation in `compact_if_needed` behind that overlap check, preserving the safety invariant "drop a tombstone only when every older version it shadows is also removed." This is the lever to pull if telemetry reclamation proves too lazy; it interacts with the deferred background-sweeper task (TTL design Future Work #79) — implementing this may remove the need for #79 on size-tiered. Out of scope: leveled strategy (already range-partitioned and handled correctly via `is_terminal`).
 
 ## #73 — Replace `server.addr` file with stdout-based port discovery
 
@@ -74,10 +80,6 @@ Add `FIRST` and `LAST` TCP commands that return the lexicographically smallest a
 
 Add an `INCR <key>` TCP command that atomically increments an integer value stored at a key (creating it at 1 if absent). Returns the new value. Teaches read-modify-write atomicity — must be handled under the engine's write lock to avoid races. Supported by both engines.
 
-## #56 — `TTL` command
-
-Add a `TTL <key> <seconds>` TCP command that associates an expiry timestamp with a key. Expired keys are invisible to reads and cleaned up during compaction. Requires storing the expiry alongside the value in the record format (or as a separate metadata field). Good exercise in extending the on-disk format and compaction logic.
-
 ## #58 — `FLUSH` command (LSM only)
 
 Add a `FLUSH` TCP command that forces an immediate memtable flush to a new SSTable, regardless of whether the flush threshold has been reached. LSM-only. Useful for testing, observability, and ensuring durability on demand. The KV engine returns an error (it has no memtable to flush).
@@ -103,6 +105,14 @@ Extend the block-based SSTable format (from #29) with per-block integrity checks
 Comprehensive evaluation of optimization strategies for block-based compression (from #29). Implement and benchmark: (1) block-level decompression caching (LRU in-memory cache), (2) lazy decompression (only decompress blocks on key access), (3) parallel decompression for range scans (decompress multiple blocks concurrently), (4) SIMD optimization for LZ77 match-finding and copying, (5) prefetching for sequential reads. Measure latency, throughput, and memory overhead against baseline. Generate comparison report. Depends on #29. Low priority—exploratory task to understand real-world performance gains and tradeoffs.
 
 # Closed Tasks
+
+## #56 — `TTL` command
+
+Per-key TTL across both engines: `TTL <key> <seconds>`, `WRITETTL`, `MWRITETTL`, and expiring `WRITE`/`MSET`. Additive `expiry_ms` in the record/WAL/hint formats and the KV hash index; expired keys are logically absent on all read paths and dropped at compaction (survivor TTL preserved). `ttl` is an atomic read-modify-write in both engines via lock-free helpers (LSM `lookup`/`apply_write`; KV `kv_lookup`/`kv_append`/`roll_active`) orchestrated under one canonical lock span — which also fixed a latent KV deadlock where `roll_segment` re-acquired the WAL lock (self-deadlock on `ttl`-rolls; ABBA vs `compact`). Spec gained a Concurrency section documenting the as-shipped canonical lock orders. New suites `kv_ttl`/`lsm_ttl`/`lsm_ttl_atomic`/`ttl_command` incl. lost-update and compact-vs-`ttl` deadlock regression tests. Full suite 317 passed / 0 failed. Deferred follow-ups: expiry stats (#79-adjacent), size-tiered partial-merge tombstone GC (#82), `Clock` trait (#81).
+
+Spec: `docs/superpowers/specs/2026-05-10-ttl-design.md`
+
+PR: <https://github.com/SilvioPilato/rustikv/pull/43>
 
 ## #72 — Set `TCP_NODELAY` on accepted connections
 

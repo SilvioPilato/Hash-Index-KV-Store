@@ -2,12 +2,12 @@ use std::{
     env,
     sync::{Arc, atomic::Ordering},
     thread,
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
     bffp::{Command, ResponseStatus, encode_frame},
-    engine::{RangeScan, StorageEngine},
+    engine::{RangeScan, StorageEngine, TtlOutcome},
     lsmengine::LsmEngine,
     stats::Stats,
 };
@@ -25,7 +25,7 @@ pub fn dispatch(
     cfg: &CompactionCfg,
 ) -> Vec<u8> {
     match cmd {
-        Command::Write(key, value) => {
+        Command::Write(key, value, ttl_seconds) => {
             log_verbose(format!(
                 "Parsed WRITE command: key='{}', value='{}'",
                 key, value
@@ -33,8 +33,20 @@ pub fn dispatch(
             if stats.compacting.load(Ordering::Relaxed) {
                 stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
             }
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_millis() as u64;
+            let ttl_ms = ttl_seconds.and_then(|s| {
+                if s == 0 {
+                    None
+                } else {
+                    Some(now_ms + (s as u64) * 1000)
+                }
+            });
+
             let lock_start = Instant::now();
-            let result = database.set(&key, &value);
+            let result = database.set_with_ttl(&key, &value, ttl_ms);
             let lock_elapsed = lock_start.elapsed().as_millis() as u64;
             stats
                 .write_blocked_total_ms
@@ -140,9 +152,25 @@ pub fn dispatch(
                 stats.write_blocked_attempts.fetch_add(1, Ordering::Relaxed);
             }
             let item_count = items.len() as u64;
-
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_millis() as u64;
+            let items_ms = items
+                .into_iter()
+                .map(|(k, v, ttl_seconds)| {
+                    let ttl_ms = ttl_seconds.and_then(|s| {
+                        if s == 0 {
+                            None
+                        } else {
+                            Some(now_ms + (s as u64) * 1000)
+                        }
+                    });
+                    (k, v, ttl_ms)
+                })
+                .collect::<Vec<(String, String, Option<u64>)>>();
             let lock_start = Instant::now();
-            let result = database.mset(items);
+            let result = database.mset_with_ttl(items_ms);
             let lock_elapsed = lock_start.elapsed().as_millis() as u64;
             stats
                 .write_blocked_total_ms
@@ -180,6 +208,29 @@ pub fn dispatch(
                     ResponseStatus::Error,
                     &["RANGE not supported by KV engine".to_string()],
                 ),
+            }
+        }
+        Command::Ttl(key, seconds) => {
+            log_verbose(format!(
+                "Parsed TTL command: key='{}' seconds={}",
+                key, seconds
+            ));
+            let expiry_ms = if seconds == 0 {
+                None
+            } else {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time went backwards")
+                    .as_millis() as u64;
+                Some(now_ms + (seconds as u64) * 1000)
+            };
+            match database.ttl(&key, expiry_ms) {
+                Ok(outcome) => match outcome {
+                    TtlOutcome::Set => encode_frame(ResponseStatus::Ok, &[]),
+                    TtlOutcome::Persisted => encode_frame(ResponseStatus::Ok, &[]),
+                    TtlOutcome::NotFound => encode_frame(ResponseStatus::NotFound, &[]),
+                },
+                Err(error) => encode_frame(ResponseStatus::Error, &[error.to_string()]),
             }
         }
     }

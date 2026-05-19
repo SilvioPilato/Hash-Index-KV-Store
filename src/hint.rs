@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::record::{SIZE_FIELD_LEN, TOMBSTONE_LEN};
+use crate::record::{FLAG_HAS_EXPIRY, FLAG_TOMBSTONE, FLAGS_LEN, SIZE_FIELD_LEN, TTL_LEN};
 
 pub struct Hint {}
 #[derive(Debug)]
@@ -12,6 +12,7 @@ pub struct HintEntry {
     pub key_size: u64,
     pub offset: u64,
     pub tombstone: bool,
+    pub expiry_ms: Option<u64>,
     pub key: String,
 }
 
@@ -23,16 +24,31 @@ impl Hint {
             .truncate(true)
             .open(path)?;
         for entry in entries.iter() {
+            let flags = if entry.tombstone { FLAG_TOMBSTONE } else { 0 }
+                | if entry.expiry_ms.is_some() {
+                    FLAG_HAS_EXPIRY
+                } else {
+                    0
+                };
+            let expiry_len = if entry.expiry_ms.is_some() {
+                TTL_LEN
+            } else {
+                0
+            };
             let mut buf: Vec<u8> = Vec::with_capacity(
                 SIZE_FIELD_LEN
                     + entry.offset.to_be_bytes().len()
-                    + TOMBSTONE_LEN
+                    + FLAGS_LEN
+                    + expiry_len
                     + entry.key_size as usize,
             );
 
             buf.extend_from_slice(&entry.key_size.to_be_bytes());
             buf.extend_from_slice(&entry.offset.to_be_bytes());
-            buf.extend_from_slice(&[entry.tombstone as u8]);
+            buf.extend_from_slice(&[flags]);
+            if let Some(ms) = entry.expiry_ms {
+                buf.extend_from_slice(&ms.to_be_bytes());
+            }
             buf.extend_from_slice(entry.key.as_bytes());
 
             file.write_all(&buf)?
@@ -50,14 +66,22 @@ impl Hint {
         while file.stream_position()? < file_size {
             let mut ks_buf = [0u8; SIZE_FIELD_LEN];
             let mut o_buf = [0u8; SIZE_FIELD_LEN];
-            let mut t_buf = [0u8; TOMBSTONE_LEN];
+            let mut f_buf = [0u8; FLAGS_LEN];
             file.read_exact(&mut ks_buf)?;
             file.read_exact(&mut o_buf)?;
-            file.read_exact(&mut t_buf)?;
+            file.read_exact(&mut f_buf)?;
 
             let key_size = u64::from_be_bytes(ks_buf);
             let offset = u64::from_be_bytes(o_buf);
-            let tombstone = t_buf[0] != 0;
+            let flags = f_buf[0];
+            let tombstone = flags & FLAG_TOMBSTONE != 0;
+            let expiry_ms = if flags & FLAG_HAS_EXPIRY != 0 {
+                let mut ttl_buf = [0u8; TTL_LEN];
+                file.read_exact(&mut ttl_buf)?;
+                Some(u64::from_be_bytes(ttl_buf))
+            } else {
+                None
+            };
 
             let mut key_buf = vec![0u8; key_size as usize];
             file.read_exact(&mut key_buf)?;
@@ -68,6 +92,7 @@ impl Hint {
                 key_size,
                 offset,
                 tombstone,
+                expiry_ms,
                 key,
             });
         }

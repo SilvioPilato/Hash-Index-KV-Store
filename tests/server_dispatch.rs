@@ -52,7 +52,7 @@ fn dispatch_write_then_read_round_trips() {
     let stats = Arc::new(Stats::new());
 
     let write_resp = dispatch(
-        Command::Write("k1".to_string(), "v1".to_string()),
+        Command::Write("k1".to_string(), "v1".to_string(), None),
         &engine,
         &stats,
         &cfg(),
@@ -86,7 +86,7 @@ fn dispatch_delete_existing_key_then_read_misses() {
     let stats = Arc::new(Stats::new());
 
     let _ = dispatch(
-        Command::Write("k".to_string(), "v".to_string()),
+        Command::Write("k".to_string(), "v".to_string(), None),
         &engine,
         &stats,
         &cfg(),
@@ -120,13 +120,13 @@ fn dispatch_list_returns_all_keys() {
     let stats = Arc::new(Stats::new());
 
     let _ = dispatch(
-        Command::Write("a".to_string(), "1".to_string()),
+        Command::Write("a".to_string(), "1".to_string(), None),
         &engine,
         &stats,
         &cfg(),
     );
     let _ = dispatch(
-        Command::Write("b".to_string(), "2".to_string()),
+        Command::Write("b".to_string(), "2".to_string(), None),
         &engine,
         &stats,
         &cfg(),
@@ -146,7 +146,7 @@ fn dispatch_exists_present_returns_ok() {
     let stats = Arc::new(Stats::new());
 
     let _ = dispatch(
-        Command::Write("k".to_string(), "v".to_string()),
+        Command::Write("k".to_string(), "v".to_string(), None),
         &engine,
         &stats,
         &cfg(),

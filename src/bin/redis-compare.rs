@@ -113,7 +113,10 @@ fn rustikv_send_command(stream: &mut TcpStream, cmd: Command) -> io::Result<bool
 }
 
 fn rustikv_write(stream: &mut TcpStream, key: &str, value: &str) -> io::Result<()> {
-    rustikv_send_command(stream, Command::Write(key.to_string(), value.to_string()))?;
+    rustikv_send_command(
+        stream,
+        Command::Write(key.to_string(), value.to_string(), None),
+    )?;
     Ok(())
 }
 

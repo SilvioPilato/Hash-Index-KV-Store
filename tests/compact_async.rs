@@ -30,10 +30,10 @@ impl ServerProcess {
         let start = Instant::now();
         let timeout = Duration::from_secs(3);
         let addr = loop {
-            if Path::new(&addr_file).exists() {
-                if let Ok(content) = fs::read_to_string(&addr_file) {
-                    break content.trim().to_string();
-                }
+            if Path::new(&addr_file).exists()
+                && let Ok(content) = fs::read_to_string(&addr_file)
+            {
+                break content.trim().to_string();
             }
             if start.elapsed() > timeout {
                 panic!("Server did not provide address within timeout");
@@ -62,7 +62,7 @@ fn test_lock() -> &'static Mutex<()> {
 }
 
 thread_local! {
-    static SERVER_ADDR: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+    static SERVER_ADDR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
 fn set_server_addr(addr: String) {
@@ -101,6 +101,11 @@ fn wait_for_server() {
 fn build_input_frame(op: u8, key: Option<&str>, value: Option<&str>) -> Vec<u8> {
     let mut payload = Cursor::new(Vec::new());
     payload.write_all(&[op]).unwrap();
+    // OpCode::Write (2) frames carry a flags byte after the opcode (TTL wire
+    // format §2.2); 0 = no TTL, no trailing seconds.
+    if op == 2 {
+        payload.write_all(&[0u8]).unwrap();
+    }
     if let Some(k) = key {
         let kb = k.as_bytes();
         payload.write_all(&(kb.len() as u16).to_be_bytes()).unwrap();

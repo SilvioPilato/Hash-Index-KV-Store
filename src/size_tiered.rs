@@ -4,6 +4,7 @@ use crate::{
     memtable::Memtable,
     sstable::{SSTable, get_sstables},
     storage_strategy::StorageStrategy,
+    utils::{is_expired, now_ms},
 };
 
 // Minimum acceptable ratio between a new SSTable's size and a bucket's
@@ -104,6 +105,7 @@ impl StorageStrategy for SizeTiered {
                 continue;
             }
             let mut memtable = Memtable::new();
+            let now_ms = now_ms();
             for segment in bucket.iter() {
                 for result in segment.iter()? {
                     let record = result?;
@@ -111,16 +113,25 @@ impl StorageStrategy for SizeTiered {
                     if memtable.entry(&record.key).is_some() {
                         continue;
                     }
-                    if record.header.tombstone {
+                    if record.header.is_tombstone()
+                        || record
+                            .header
+                            .expiry_ms
+                            .is_some_and(|e| is_expired(e, now_ms))
+                    {
                         memtable.remove(record.key);
                     } else {
-                        memtable.insert(record.key, record.value);
+                        memtable.insert(record.key, record.value, record.header.expiry_ms);
                     }
                 }
                 fs::remove_file(&segment.path)?;
             }
 
-            memtable.drop_tombstones();
+            // No drop_tombstones() here: this is a partial, per-bucket merge.
+            // A tombstone may still be shadowing an older live value in another
+            // bucket that this merge does not consume; dropping it would let
+            // that value resurrect on read. Tombstone reclamation happens only
+            // in compact_all, which merges every bucket and so can safely GC.
 
             let new_sst = SSTable::from_memtable(
                 db_path,
@@ -139,6 +150,7 @@ impl StorageStrategy for SizeTiered {
 
     fn compact_all(&mut self, db_path: &str, db_name: &str) -> std::io::Result<()> {
         let mut memtable = Memtable::new();
+        let now_ms = now_ms();
         for sst in self.iter_all() {
             for result in sst.iter()? {
                 let record = result?;
@@ -146,10 +158,15 @@ impl StorageStrategy for SizeTiered {
                 if memtable.entry(&record.key).is_some() {
                     continue;
                 }
-                if record.header.tombstone {
+                if record.header.is_tombstone()
+                    || record
+                        .header
+                        .expiry_ms
+                        .is_some_and(|e| is_expired(e, now_ms))
+                {
                     memtable.remove(record.key);
                 } else {
-                    memtable.insert(record.key, record.value);
+                    memtable.insert(record.key, record.value, record.header.expiry_ms);
                 }
             }
             fs::remove_file(&sst.path)?;

@@ -253,7 +253,10 @@ fn sequential(cfg: &BenchConfig) -> io::Result<()> {
     let write_start = Instant::now();
     for key in &keys {
         let t = Instant::now();
-        send_command(&mut stream, Command::Write(key.clone(), value.clone()))?;
+        send_command(
+            &mut stream,
+            Command::Write(key.clone(), value.clone(), None),
+        )?;
         write_latencies.push(t.elapsed());
     }
     let write_elapsed = write_start.elapsed();
@@ -328,7 +331,7 @@ fn sequential(cfg: &BenchConfig) -> io::Result<()> {
             let t = Instant::now();
             send_command(
                 &mut stream,
-                Command::Write((*key).clone(), overwrite_value.clone()),
+                Command::Write((*key).clone(), overwrite_value.clone(), None),
             )?;
             overwrite_latencies.push(t.elapsed());
         }
@@ -477,7 +480,10 @@ fn concurrent(cfg: &BenchConfig) -> io::Result<()> {
             let phase_start = Instant::now();
             for key in &keys[start..end] {
                 let t = Instant::now();
-                send_command(&mut stream, Command::Write(key.clone(), (*value).clone()))?;
+                send_command(
+                    &mut stream,
+                    Command::Write(key.clone(), (*value).clone(), None),
+                )?;
                 latencies.push(t.elapsed());
             }
             Ok(PhaseResult {
@@ -618,7 +624,7 @@ fn concurrent(cfg: &BenchConfig) -> io::Result<()> {
             let t = Instant::now();
             send_command(
                 &mut del_stream,
-                Command::Write((*key).clone(), overwrite_value.clone()),
+                Command::Write((*key).clone(), overwrite_value.clone(), None),
             )?;
             overwrite_latencies.push(t.elapsed());
         }
@@ -747,7 +753,10 @@ fn mixed(cfg: &BenchConfig) -> io::Result<()> {
             while !stop.load(Ordering::Relaxed) {
                 let key = &keys[idx % keys.len()];
                 let t = Instant::now();
-                send_command(&mut stream, Command::Write(key.clone(), (*value).clone()))?;
+                send_command(
+                    &mut stream,
+                    Command::Write(key.clone(), (*value).clone(), None),
+                )?;
                 latencies.push(t.elapsed());
                 idx += 1;
             }

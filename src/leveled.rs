@@ -4,6 +4,7 @@ use crate::{
     memtable::Memtable,
     sstable::{SSTable, get_sstables},
     storage_strategy::StorageStrategy,
+    utils::{is_expired, now_ms},
 };
 
 struct Level {
@@ -84,19 +85,25 @@ impl Level {
             return Ok(None);
         }
         let mut memtable = Memtable::new();
+        let now_ms = now_ms();
         for sst in self.iter() {
             for result in sst.iter()? {
                 let record = result?;
                 if memtable.entry(&record.key).is_some() {
                     continue;
                 }
-                if record.header.tombstone {
+                if record.header.is_tombstone()
+                    || record
+                        .header
+                        .expiry_ms
+                        .is_some_and(|e| is_expired(e, now_ms))
+                {
                     if self.is_terminal {
                         continue;
                     }
                     memtable.remove(record.key);
                 } else {
-                    memtable.insert(record.key, record.value);
+                    memtable.insert(record.key, record.value, record.header.expiry_ms);
                 }
             }
             fs::remove_file(&sst.path)?;
@@ -203,7 +210,7 @@ impl Leveled {
         let (left, right) = self.levels.split_at_mut(source_id + 1);
         let source = left.last_mut().unwrap();
         let target = &mut right[target_id - source_id - 1];
-
+        let now_ms = now_ms();
         match source.key_range() {
             Some((start, end)) => {
                 let mut memtable = Memtable::new();
@@ -216,13 +223,22 @@ impl Leveled {
                         if memtable.entry(&record.key).is_some() {
                             continue;
                         }
-                        if record.header.tombstone {
+                        if record.header.is_tombstone() {
                             if target.is_terminal {
                                 continue; // drop tombstone
                             }
                             memtable.remove(record.key);
+                        } else if record
+                            .header
+                            .expiry_ms
+                            .is_some_and(|e| is_expired(e, now_ms))
+                        {
+                            if target.is_terminal {
+                                continue;
+                            }
+                            memtable.remove(record.key);
                         } else {
-                            memtable.insert(record.key, record.value);
+                            memtable.insert(record.key, record.value, record.header.expiry_ms);
                         }
                     }
                 }
@@ -233,13 +249,22 @@ impl Leveled {
                         if memtable.entry(&record.key).is_some() {
                             continue;
                         }
-                        if record.header.tombstone {
+                        if record.header.is_tombstone() {
                             if target.is_terminal {
                                 continue; // drop tombstone
                             }
                             memtable.remove(record.key);
+                        } else if record
+                            .header
+                            .expiry_ms
+                            .is_some_and(|e| is_expired(e, now_ms))
+                        {
+                            if target.is_terminal {
+                                continue;
+                            }
+                            memtable.remove(record.key);
                         } else {
-                            memtable.insert(record.key, record.value);
+                            memtable.insert(record.key, record.value, record.header.expiry_ms);
                         }
                     }
                 }

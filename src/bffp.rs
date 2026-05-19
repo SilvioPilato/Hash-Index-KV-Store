@@ -2,16 +2,20 @@
 
 use std::io::{self, Cursor, Read, Write};
 
+const FLAGS_LEN: usize = 1;
 const FRAME_LEN_SIZE: u64 = 4;
 const OP_CODE_SIZE: usize = 1;
 const KEY_LEN_SIZE: usize = 2;
 const VALUE_LEN_SIZE: usize = 4;
 const PAYLOAD_LEN_SIZE: usize = 4;
+const TTL_LEN_SIZE: usize = 4;
+
+const FLAG_HAS_TTL: u8 = 1;
 
 pub enum Command {
     Invalid(u8),
     Read(String),
-    Write(String, String),
+    Write(String, String, Option<u32>),
     Delete(String),
     Compact,
     Stats,
@@ -19,8 +23,9 @@ pub enum Command {
     Exists(String),
     Ping,
     Mget(Vec<String>),
-    Mset(Vec<(String, String)>),
+    Mset(Vec<(String, String, Option<u32>)>),
     Range(String, String),
+    Ttl(String, u32),
 }
 
 #[repr(u8)]
@@ -36,6 +41,7 @@ pub enum OpCode {
     Mget = 9,
     Mset = 10,
     Range = 11,
+    Ttl = 12,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -54,6 +60,7 @@ impl TryFrom<u8> for OpCode {
             9 => Ok(OpCode::Mget),
             10 => Ok(OpCode::Mset),
             11 => Ok(OpCode::Range),
+            12 => Ok(OpCode::Ttl),
             n => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unknown op code: {n}"),
@@ -105,9 +112,15 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
     match OpCode::try_from(op_buf[0]) {
         Ok(OpCode::Read) => Ok(Command::Read(read_key(&mut cur)?)),
         Ok(OpCode::Write) => {
+            let flag = read_flags(&mut cur)?;
             let key = read_key(&mut cur)?;
             let value = read_value(&mut cur)?;
-            Ok(Command::Write(key, value))
+            let ttl = if flag & FLAG_HAS_TTL != 0 {
+                Some(read_ttl(&mut cur)?)
+            } else {
+                None
+            };
+            Ok(Command::Write(key, value, ttl))
         }
         Ok(OpCode::Delete) => Ok(Command::Delete(read_key(&mut cur)?)),
         Ok(OpCode::Compact) => Ok(Command::Compact),
@@ -127,10 +140,16 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
         Ok(OpCode::Mset) => {
             let mut items = Vec::new();
             while cur.position() < _total_len as u64 + FRAME_LEN_SIZE {
+                let flag = read_flags(&mut cur)?;
                 let key = read_key(&mut cur)?;
                 let value = read_value(&mut cur)?;
+                let ttl = if flag & FLAG_HAS_TTL != 0 {
+                    Some(read_ttl(&mut cur)?)
+                } else {
+                    None
+                };
 
-                items.push((key, value));
+                items.push((key, value, ttl));
             }
 
             Ok(Command::Mset(items))
@@ -139,6 +158,11 @@ pub fn decode_input_frame(buffer: &[u8]) -> io::Result<Command> {
             let start = read_key(&mut cur)?;
             let end = read_key(&mut cur)?;
             Ok(Command::Range(start, end))
+        }
+        Ok(OpCode::Ttl) => {
+            let key = read_key(&mut cur)?;
+            let ttl = read_ttl(&mut cur)?;
+            Ok(Command::Ttl(key, ttl))
         }
         Err(_) => Ok(Command::Invalid(op_buf[0])),
     }
@@ -206,15 +230,29 @@ pub fn encode_command(command: Command) -> Vec<u8> {
 
             payload.into_inner()
         }
-        Command::Write(key, value) => {
-            let total_len =
-                (OP_CODE_SIZE + KEY_LEN_SIZE + VALUE_LEN_SIZE + key.len() + value.len()) as u32;
+        Command::Write(key, value, ttl) => {
+            // | total_len(4) | OpCode::Write(1) | flags(1) | key_len(2) | key
+            // | value_len(4) | value | [seconds(4) if flags & HAS_TTL] |
+            let (flags, seconds) = match ttl {
+                Some(ttl_secs) => (FLAG_HAS_TTL, Some(ttl_secs)),
+                None => (0u8, None),
+            };
+            let ttl_bytes = if seconds.is_some() { TTL_LEN_SIZE } else { 0 };
+            let total_len = (OP_CODE_SIZE
+                + FLAGS_LEN
+                + KEY_LEN_SIZE
+                + VALUE_LEN_SIZE
+                + key.len()
+                + value.len()
+                + ttl_bytes) as u32;
             let key_len = key.len() as u16;
             let val_len = value.len() as u32;
 
             payload.write_all(&total_len.to_be_bytes()).unwrap();
 
             payload.write_all(&[OpCode::Write as u8]).unwrap();
+
+            payload.write_all(&flags.to_be_bytes()).unwrap();
 
             payload.write_all(&key_len.to_be_bytes()).unwrap();
 
@@ -223,6 +261,10 @@ pub fn encode_command(command: Command) -> Vec<u8> {
             payload.write_all(&val_len.to_be_bytes()).unwrap();
 
             payload.write_all(value.as_bytes()).unwrap();
+
+            if let Some(secs) = seconds {
+                payload.write_all(&secs.to_be_bytes()).unwrap();
+            }
 
             payload.into_inner()
         }
@@ -305,9 +347,15 @@ pub fn encode_command(command: Command) -> Vec<u8> {
             payload.into_inner()
         }
         Command::Mset(items) => {
-            let mut total_len = OP_CODE_SIZE + (KEY_LEN_SIZE + VALUE_LEN_SIZE) * items.len();
-            for (k, v) in &items {
+            // | total_len(4) | OpCode::Mset(1) | [ flags(1) | key_len(2) | key
+            // | value_len(4) | value | [seconds(4) if flags & HAS_TTL] ]*
+            let mut total_len =
+                OP_CODE_SIZE + (FLAGS_LEN + KEY_LEN_SIZE + VALUE_LEN_SIZE) * items.len();
+            for (k, v, ttl) in &items {
                 total_len += k.len() + v.len();
+                if ttl.is_some() {
+                    total_len += TTL_LEN_SIZE;
+                }
             }
 
             payload
@@ -315,13 +363,23 @@ pub fn encode_command(command: Command) -> Vec<u8> {
                 .unwrap();
             payload.write_all(&[OpCode::Mset as u8]).unwrap();
 
-            for (k, v) in items {
+            for (k, v, ttl) in items {
+                let (flags, seconds) = match ttl {
+                    Some(ttl_secs) => (FLAG_HAS_TTL, Some(ttl_secs)),
+                    None => (0u8, None),
+                };
+                payload.write_all(&flags.to_be_bytes()).unwrap();
+
                 let key_len = k.len() as u16;
                 payload.write_all(&key_len.to_be_bytes()).unwrap();
                 payload.write_all(k.as_bytes()).unwrap();
                 let val_len = v.len() as u32;
                 payload.write_all(&val_len.to_be_bytes()).unwrap();
                 payload.write_all(v.as_bytes()).unwrap();
+
+                if let Some(secs) = seconds {
+                    payload.write_all(&secs.to_be_bytes()).unwrap();
+                }
             }
 
             payload.into_inner()
@@ -337,6 +395,18 @@ pub fn encode_command(command: Command) -> Vec<u8> {
             payload.write_all(start.as_bytes()).unwrap();
             payload.write_all(&end_len.to_be_bytes()).unwrap();
             payload.write_all(end.as_bytes()).unwrap();
+
+            payload.into_inner()
+        }
+        Command::Ttl(key, expiry) => {
+            // | total_len(4) | OpCode::Ttl(1) | key_len(2) | key | seconds(4) |
+            let key_len = key.len() as u16;
+            let total_len = (OP_CODE_SIZE + KEY_LEN_SIZE + key.len() + TTL_LEN_SIZE) as u32;
+            payload.write_all(&total_len.to_be_bytes()).unwrap();
+            payload.write_all(&[OpCode::Ttl as u8]).unwrap();
+            payload.write_all(&key_len.to_be_bytes()).unwrap();
+            payload.write_all(key.as_bytes()).unwrap();
+            payload.write_all(&expiry.to_be_bytes()).unwrap();
 
             payload.into_inner()
         }
@@ -368,4 +438,16 @@ fn read_key(cur: &mut Cursor<&[u8]>) -> io::Result<String> {
 
 fn read_value(cur: &mut Cursor<&[u8]>) -> io::Result<String> {
     read_string(cur, VALUE_LEN_SIZE)
+}
+
+fn read_ttl(cur: &mut Cursor<&[u8]>) -> io::Result<u32> {
+    let mut b = [0u8; TTL_LEN_SIZE];
+    cur.read_exact(&mut b)?;
+    Ok(u32::from_be_bytes(b))
+}
+
+fn read_flags(cur: &mut Cursor<&[u8]>) -> io::Result<u8> {
+    let mut b = [0u8; FLAGS_LEN];
+    cur.read_exact(&mut b)?;
+    Ok(u8::from_be_bytes(b))
 }

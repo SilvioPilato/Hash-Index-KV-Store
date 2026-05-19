@@ -20,19 +20,19 @@ fn as_error(result: ParseResult) -> String {
 #[test]
 fn write_parses_key_and_value() {
     let cmd = as_cmd(parse_command("WRITE foo bar"));
-    assert!(matches!(cmd, Command::Write(k, v) if k == "foo" && v == "bar"));
+    assert!(matches!(cmd, Command::Write(k, v, _) if k == "foo" && v == "bar"));
 }
 
 #[test]
 fn write_joins_multi_word_value() {
     let cmd = as_cmd(parse_command("WRITE key hello world"));
-    assert!(matches!(cmd, Command::Write(_, v) if v == "hello world"));
+    assert!(matches!(cmd, Command::Write(_, v, _) if v == "hello world"));
 }
 
 #[test]
 fn write_is_case_insensitive() {
     let cmd = as_cmd(parse_command("write foo bar"));
-    assert!(matches!(cmd, Command::Write(_, _)));
+    assert!(matches!(cmd, Command::Write(_, _, _)));
 }
 
 #[test]

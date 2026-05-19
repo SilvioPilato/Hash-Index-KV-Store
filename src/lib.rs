@@ -19,5 +19,6 @@ pub mod size_tiered;
 pub mod sstable;
 pub mod stats;
 pub mod storage_strategy;
+pub mod utils;
 pub mod wal;
 pub mod worker;

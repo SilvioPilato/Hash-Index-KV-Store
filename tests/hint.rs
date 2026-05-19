@@ -41,18 +41,21 @@ fn hint_entry_round_trip() {
             key_size: 5,
             offset: 0,
             tombstone: false,
+            expiry_ms: None,
             key: "hello".to_string(),
         },
         HintEntry {
             key_size: 5,
             offset: 42,
             tombstone: false,
+            expiry_ms: None,
             key: "world".to_string(),
         },
         HintEntry {
             key_size: 7,
             offset: 0,
             tombstone: true,
+            expiry_ms: None,
             key: "deleted".to_string(),
         },
     ];
@@ -89,7 +92,7 @@ fn hint_read_empty_file() {
 #[test]
 fn compaction_produces_hint_files() {
     let path = temp_db_path("produces_hint");
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &path,
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -113,7 +116,7 @@ fn compaction_produces_hint_files() {
 fn from_dir_loads_via_hint_files() {
     let path = temp_db_path("load_hint");
     {
-        let mut db = KVEngine::new(
+        let db = KVEngine::new(
             &path,
             "test",
             DEFAULT_MAX_SEGMENT_BYTES,
@@ -148,7 +151,7 @@ fn from_dir_loads_via_hint_files() {
 fn from_dir_falls_back_without_hint_files() {
     let path = temp_db_path("no_hint");
     {
-        let mut db = KVEngine::new(
+        let db = KVEngine::new(
             &path,
             "test",
             DEFAULT_MAX_SEGMENT_BYTES,
@@ -184,7 +187,7 @@ fn from_dir_falls_back_without_hint_files() {
 #[test]
 fn compaction_cleans_up_old_hint_files() {
     let path = temp_db_path("cleanup_hint");
-    let mut db = KVEngine::new(
+    let db = KVEngine::new(
         &path,
         "test",
         DEFAULT_MAX_SEGMENT_BYTES,
@@ -222,7 +225,7 @@ fn compaction_cleans_up_old_hint_files() {
 fn hint_files_with_multi_segment_compaction() {
     // Use tiny segment limit to force multiple segments, then compact
     let path = temp_db_path("multi_seg_hint");
-    let mut db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
+    let db = KVEngine::new(&path, "test", 50, FSyncStrategy::Always).unwrap();
     db.set("k1", "value_one").unwrap();
     db.set("k2", "value_two").unwrap();
     db.set("k3", "value_three").unwrap();

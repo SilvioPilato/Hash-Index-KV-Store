@@ -33,10 +33,10 @@ fn read_server_addr(db_path: &str) -> String {
     let addr_file = format!("{}/server.addr", db_path);
     let start = Instant::now();
     loop {
-        if Path::new(&addr_file).exists() {
-            if let Ok(content) = fs::read_to_string(&addr_file) {
-                return content.trim().to_string();
-            }
+        if Path::new(&addr_file).exists()
+            && let Ok(content) = fs::read_to_string(&addr_file)
+        {
+            return content.trim().to_string();
         }
         if start.elapsed() > Duration::from_secs(3) {
             panic!("Server did not provide address within timeout");

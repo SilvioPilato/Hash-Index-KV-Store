@@ -9,7 +9,9 @@ use std::{
     path::PathBuf,
 };
 
+use crate::engine::TtlOutcome;
 use crate::storage_strategy::StorageStrategy;
+use crate::utils::{is_expired, now_ms};
 use crate::{
     engine::{RangeScan, StorageEngine},
     memtable::Memtable,
@@ -17,6 +19,66 @@ use crate::{
     wal::Wal,
 };
 use std::sync::atomic::Ordering::Relaxed;
+
+/// Lock-free read resolution: active → immutable → SSTable.
+/// Borrows state directly — cannot lock, so re-entrancy is structurally impossible.
+pub(crate) fn lookup(
+    active: &Memtable,
+    immutable: Option<&Memtable>,
+    strategy: &dyn StorageStrategy,
+    key: &str,
+    now_ms: u64,
+) -> io::Result<Option<String>> {
+    if let Some(entry) = active.entry(key) {
+        return match (entry.value.as_deref(), entry.expiry_ms) {
+            (Some(_), Some(ms)) if is_expired(ms, now_ms) => Ok(None),
+            (Some(v), _) => Ok(Some(v.to_string())),
+            (None, _) => Ok(None),
+        };
+    }
+
+    if let Some(memtable) = immutable
+        && let Some(entry) = memtable.entry(key)
+    {
+        return match (entry.value.as_deref(), entry.expiry_ms) {
+            (Some(_), Some(ms)) if is_expired(ms, now_ms) => Ok(None),
+            (Some(v), _) => Ok(Some(v.to_string())),
+            (None, _) => Ok(None),
+        };
+    }
+
+    for segment in strategy.iter_for_key(key) {
+        match segment.get(key)? {
+            Some(Some(v)) => return Ok(Some(v)),
+            Some(None) => return Ok(None),
+            None => continue,
+        }
+    }
+
+    Ok(None)
+}
+
+/// Lock-free write: WAL append + memtable mutation.
+/// Returns the new memtable size_bytes so the caller can decide to flush AFTER releasing locks.
+pub(crate) fn apply_write(
+    wal: &mut Wal,
+    active: &mut Memtable,
+    key: &str,
+    value: Option<&str>,
+    expiry_ms: Option<u64>,
+) -> io::Result<usize> {
+    match value {
+        Some(v) => {
+            wal.append(key.to_string(), v.to_string(), false, expiry_ms)?;
+            active.insert(key.to_string(), v.to_string(), expiry_ms);
+        }
+        None => {
+            wal.append(key.to_string(), String::new(), true, None)?;
+            active.remove(key.to_string());
+        }
+    }
+    Ok(active.size_bytes())
+}
 
 struct LsmShared {
     active: RwLock<Memtable>,
@@ -157,47 +219,21 @@ impl Drop for LsmEngine {
 
 impl StorageEngine for LsmEngine {
     fn get(&self, key: &str) -> Result<Option<(String, String)>, std::io::Error> {
-        {
-            let memtable = self.shared.active.read().unwrap();
-            match memtable.entry(key) {
-                Some(Some(v)) => return Ok(Some((key.to_string(), v.clone()))),
-                Some(None) => return Ok(None),
-                None => {}
-            }
+        let now = now_ms();
+        let active = self.shared.active.read().unwrap();
+        let immutable = self.shared.immutable.read().unwrap();
+        let strategy = self.shared.storage_strategy.read().unwrap();
+        match lookup(&active, immutable.as_ref(), strategy.as_ref(), key, now)? {
+            Some(v) => Ok(Some((key.to_string(), v))),
+            None => Ok(None),
         }
-
-        {
-            let immutable = self.shared.immutable.read().unwrap();
-            if let Some(memtable) = immutable.as_ref() {
-                match memtable.entry(key) {
-                    Some(Some(v)) => return Ok(Some((key.to_string(), v.clone()))),
-                    Some(None) => return Ok(None),
-                    None => {}
-                }
-            }
-        }
-
-        {
-            let storage_strategy = self.shared.storage_strategy.read().unwrap();
-            for segment in storage_strategy.iter_for_key(key) {
-                match segment.get(key)? {
-                    Some(Some(v)) => return Ok(Some((key.to_string(), v))),
-                    Some(None) => return Ok(None),
-                    None => continue,
-                }
-            }
-        }
-
-        Ok(None)
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), std::io::Error> {
         let memtable_size = {
             let mut wal = self.shared.wal.lock().unwrap();
-            let mut memtable = self.shared.active.write().unwrap();
-            wal.append(key.to_string(), value.to_string(), false)?;
-            memtable.insert(key.to_string(), value.to_string());
-            memtable.size_bytes()
+            let mut active = self.shared.active.write().unwrap();
+            apply_write(&mut wal, &mut active, key, Some(value), None)?
         };
 
         if memtable_size >= self.shared.max_memtable_bytes.load(Relaxed) {
@@ -213,9 +249,7 @@ impl StorageEngine for LsmEngine {
         let size_bytes = {
             let mut wal = self.shared.wal.lock().unwrap();
             let mut active = self.shared.active.write().unwrap();
-            wal.append(key.to_string(), String::new(), true)?;
-            active.remove(key.to_string());
-            active.size_bytes()
+            apply_write(&mut wal, &mut active, key, None, None)?
         };
 
         if size_bytes >= self.shared.max_memtable_bytes.load(Relaxed) {
@@ -235,38 +269,36 @@ impl StorageEngine for LsmEngine {
         }
 
         let mut wal = self.shared.wal.lock().unwrap();
+
+        // Acquire active+immutable before storage_strategy to match get()'s
+        // lock order (active → immutable → storage_strategy).
+        let mut active = self.shared.active.write().unwrap();
+        let mut immutable = self.shared.immutable.write().unwrap();
         let mut storage_strategy = self.shared.storage_strategy.write().unwrap();
 
-        // Inline flush under storage_strategy lock to prevent concurrent
-        // flush_memtable from sneaking an SSTable in before compact_all.
-        {
-            let mut active = self.shared.active.write().unwrap();
-            let mut immutable = self.shared.immutable.write().unwrap();
-            let old = std::mem::take(&mut *active);
-            *immutable = Some(old);
-        }
-        {
-            let immutable = self.shared.immutable.read().unwrap();
-            if let Some(ref memtable) = *immutable {
-                let sstable = SSTable::from_memtable(
-                    &self.shared.db_path,
-                    &self.shared.db_name,
-                    memtable,
-                    None,
-                    self.shared.block_size_bytes,
-                    self.shared.block_compression_enabled,
-                )?;
-                drop(immutable);
-                storage_strategy.add_sstable(sstable)?;
-            }
+        // Inline flush: swap active into immutable, flush to SSTable.
+        let old = std::mem::take(&mut *active);
+        *immutable = Some(old);
+
+        if let Some(ref memtable) = *immutable {
+            let sstable = SSTable::from_memtable(
+                &self.shared.db_path,
+                &self.shared.db_name,
+                memtable,
+                None,
+                self.shared.block_size_bytes,
+                self.shared.block_compression_enabled,
+            )?;
+            storage_strategy.add_sstable(sstable)?;
         }
 
         wal.reset()?;
+        *immutable = None;
 
-        {
-            let mut immutable = self.shared.immutable.write().unwrap();
-            *immutable = None;
-        }
+        // Release memtable locks before the (potentially slow) compaction I/O.
+        drop(immutable);
+        drop(active);
+        drop(wal);
 
         storage_strategy.compact_all(&self.shared.db_path, &self.shared.db_name)?;
 
@@ -293,16 +325,24 @@ impl StorageEngine for LsmEngine {
 
     fn list_keys(&self) -> io::Result<Vec<String>> {
         let mut keys: HashSet<String> = HashSet::new();
+        let now_ms = now_ms();
         {
             let storage_strategy = self.shared.storage_strategy.read().unwrap();
             for segment in storage_strategy.iter_all() {
                 for result in segment.iter()? {
                     let record = result?;
-                    if record.header.tombstone {
+                    if record.header.is_tombstone() {
                         keys.remove(&record.key);
-                    } else {
-                        keys.insert(record.key);
+                        continue;
                     }
+                    if let Some(expiry_ms) = record.header.expiry_ms
+                        && is_expired(expiry_ms, now_ms)
+                    {
+                        keys.remove(&record.key);
+                        continue;
+                    }
+
+                    keys.insert(record.key);
                 }
             }
         }
@@ -310,11 +350,17 @@ impl StorageEngine for LsmEngine {
         {
             let immutable = self.shared.immutable.read().unwrap();
             if let Some(memtable) = immutable.as_ref() {
-                for (key, opt) in memtable.entries() {
-                    if opt.is_some() {
-                        keys.insert(key.clone());
-                    } else {
-                        keys.remove(key);
+                for (key, entry) in memtable.entries() {
+                    match (entry.value.as_deref(), entry.expiry_ms) {
+                        (Some(_), Some(ms)) if is_expired(ms, now_ms) => {
+                            keys.remove(key);
+                        }
+                        (Some(_), _) => {
+                            keys.insert(key.clone());
+                        }
+                        (None, _) => {
+                            keys.remove(key);
+                        }
                     }
                 }
             }
@@ -322,11 +368,17 @@ impl StorageEngine for LsmEngine {
 
         {
             let memtable = self.shared.active.read().unwrap();
-            for (key, opt) in memtable.entries() {
-                if opt.is_some() {
-                    keys.insert(key.clone());
-                } else {
-                    keys.remove(key);
+            for (key, entry) in memtable.entries() {
+                match (entry.value.as_deref(), entry.expiry_ms) {
+                    (Some(_), Some(ms)) if is_expired(ms, now_ms) => {
+                        keys.remove(key);
+                    }
+                    (Some(_), _) => {
+                        keys.insert(key.clone());
+                    }
+                    (None, _) => {
+                        keys.remove(key);
+                    }
                 }
             }
         }
@@ -365,6 +417,61 @@ impl StorageEngine for LsmEngine {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn ttl(&self, key: &str, expiry_ms: Option<u64>) -> io::Result<crate::engine::TtlOutcome> {
+        let now = now_ms();
+        let (found, size) = {
+            // Lock order: wal -> active -> immutable -> storage_strategy
+            // (matches set's wal->active and get's active->immutable->storage_strategy)
+            let mut wal = self.shared.wal.lock().unwrap();
+            let mut active = self.shared.active.write().unwrap();
+            let immutable = self.shared.immutable.read().unwrap();
+            let strategy = self.shared.storage_strategy.read().unwrap();
+
+            match lookup(&active, immutable.as_ref(), strategy.as_ref(), key, now)? {
+                Some(v) => {
+                    let sz = apply_write(&mut wal, &mut active, key, Some(&v), expiry_ms)?;
+                    (true, Some(sz))
+                }
+                None => (false, None),
+            }
+        };
+        if !found {
+            return Ok(TtlOutcome::NotFound);
+        }
+        if let Some(sz) = size
+            && sz >= self.shared.max_memtable_bytes.load(Relaxed)
+        {
+            self.flush_memtable_async()?;
+        }
+        Ok(if expiry_ms.is_some() {
+            TtlOutcome::Set
+        } else {
+            TtlOutcome::Persisted
+        })
+    }
+
+    fn set_with_ttl(&self, key: &str, value: &str, expiry_ms: Option<u64>) -> io::Result<()> {
+        let memtable_size = {
+            let mut wal = self.shared.wal.lock().unwrap();
+            let mut active = self.shared.active.write().unwrap();
+            apply_write(&mut wal, &mut active, key, Some(value), expiry_ms)?
+        };
+
+        if memtable_size >= self.shared.max_memtable_bytes.load(Relaxed) {
+            self.flush_memtable_async()?;
+        }
+
+        Ok(())
+    }
+
+    fn mset_with_ttl(&self, items: Vec<(String, String, Option<u64>)>) -> io::Result<()> {
+        for (k, v, expiry_ms) in items {
+            self.set_with_ttl(&k, &v, expiry_ms)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl RangeScan for LsmEngine {
@@ -372,6 +479,8 @@ impl RangeScan for LsmEngine {
         if start > end {
             return Ok(vec![]);
         }
+
+        let now_ms = now_ms();
         let mut b_map: BTreeMap<String, String> = BTreeMap::new();
         {
             let storage_strategy = self.shared.storage_strategy.read().unwrap();
@@ -381,7 +490,15 @@ impl RangeScan for LsmEngine {
                     if record.key.as_str() < start || record.key.as_str() > end {
                         continue;
                     }
-                    if record.header.tombstone {
+
+                    if let Some(expiry_ms) = record.header.expiry_ms
+                        && is_expired(expiry_ms, now_ms)
+                    {
+                        b_map.remove(&record.key);
+                        continue;
+                    }
+
+                    if record.header.is_tombstone() {
                         b_map.remove(&record.key);
                         continue;
                     }
@@ -394,13 +511,14 @@ impl RangeScan for LsmEngine {
         {
             let immutable = self.shared.immutable.read().unwrap();
             if let Some(memtable) = immutable.as_ref() {
-                for (k, v) in memtable
+                for (k, entry) in memtable
                     .entries()
                     .range::<str, _>((Included(start), Included(end)))
                 {
-                    match v {
-                        Some(val) => b_map.insert(k.clone(), val.clone()),
-                        None => b_map.remove(k),
+                    match (entry.value.as_deref(), entry.expiry_ms) {
+                        (Some(_), Some(ms)) if is_expired(ms, now_ms) => b_map.remove(k),
+                        (Some(val), _) => b_map.insert(k.clone(), val.to_string()),
+                        (None, _) => b_map.remove(k),
                     };
                 }
             }
@@ -408,13 +526,14 @@ impl RangeScan for LsmEngine {
 
         {
             let memtable = self.shared.active.read().unwrap();
-            for (k, v) in memtable
+            for (k, entry) in memtable
                 .entries()
                 .range::<str, _>((Included(start), Included(end)))
             {
-                match v {
-                    Some(val) => b_map.insert(k.clone(), val.clone()),
-                    None => b_map.remove(k),
+                match (entry.value.as_deref(), entry.expiry_ms) {
+                    (Some(_), Some(ms)) if is_expired(ms, now_ms) => b_map.remove(k),
+                    (Some(val), _) => b_map.insert(k.clone(), val.to_string()),
+                    (None, _) => b_map.remove(k),
                 };
             }
         }

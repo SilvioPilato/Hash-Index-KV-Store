@@ -73,7 +73,7 @@ fn parse_level_0_filename() {
 #[test]
 fn set_and_get() {
     let dir = temp_dir("set_get");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("hello", "world").unwrap();
     let result = engine.get("hello").unwrap();
     assert_eq!(result, Some(("hello".to_string(), "world".to_string())));
@@ -89,7 +89,7 @@ fn get_missing_key() {
 #[test]
 fn set_overwrite() {
     let dir = temp_dir("overwrite");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "old").unwrap();
     engine.set("k", "new").unwrap();
     let (_, v) = engine.get("k").unwrap().unwrap();
@@ -99,7 +99,7 @@ fn set_overwrite() {
 #[test]
 fn delete_removes_key() {
     let dir = temp_dir("delete");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "v").unwrap();
     engine.delete("k").unwrap();
     assert_eq!(engine.get("k").unwrap(), None);
@@ -108,7 +108,7 @@ fn delete_removes_key() {
 #[test]
 fn delete_nonexistent_key() {
     let dir = temp_dir("delete_missing");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     let result = engine.delete("nope").unwrap();
     assert_eq!(result, None);
 }
@@ -145,7 +145,7 @@ fn memtable_flushes_to_sstable() {
 #[test]
 fn reads_span_memtable_and_segments() {
     let dir = temp_dir("span");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
 
@@ -158,7 +158,7 @@ fn reads_span_memtable_and_segments() {
 #[test]
 fn delete_shadows_flushed_value() {
     let dir = temp_dir("shadow");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.delete("k1").unwrap();
     assert_eq!(engine.get("k1").unwrap(), None);
@@ -169,7 +169,7 @@ fn delete_shadows_flushed_value() {
 #[test]
 fn compact_preserves_values() {
     let dir = temp_dir("compact_preserve");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
 
@@ -184,7 +184,7 @@ fn compact_preserves_values() {
 #[test]
 fn compact_keeps_latest_value() {
     let dir = temp_dir("compact_latest");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k", "old").unwrap();
     engine.set("k", "new").unwrap();
 
@@ -197,7 +197,7 @@ fn compact_keeps_latest_value() {
 #[test]
 fn compact_drops_deleted_keys() {
     let dir = temp_dir("compact_delete");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.delete("k1").unwrap();
 
@@ -209,7 +209,7 @@ fn compact_drops_deleted_keys() {
 #[test]
 fn compact_is_idempotent() {
     let dir = temp_dir("compact_idempotent");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k1", "v1").unwrap();
     engine.set("k2", "v2").unwrap();
 
@@ -228,7 +228,7 @@ fn compact_is_idempotent() {
 fn from_dir_reloads_segments() {
     let dir = temp_dir("from_dir");
     {
-        let mut engine = new_engine(&dir, "test", 1).unwrap();
+        let engine = new_engine(&dir, "test", 1).unwrap();
         engine.set("k1", "v1").unwrap();
         engine.set("k2", "v2").unwrap();
     }
@@ -244,7 +244,7 @@ fn from_dir_reloads_segments() {
 fn from_dir_preserves_level_in_filename() {
     let dir = temp_dir("level_filename");
     {
-        let mut engine = new_engine(&dir, "test", 1).unwrap();
+        let engine = new_engine(&dir, "test", 1).unwrap();
         engine.set("k1", "v1").unwrap();
         engine.set("k2", "v2").unwrap();
         engine.set("k3", "v3").unwrap();
@@ -278,7 +278,7 @@ fn from_dir_preserves_level_in_filename() {
 fn from_dir_reloads_after_compaction() {
     let dir = temp_dir("reload_compact");
     {
-        let mut engine = new_engine(&dir, "test", 1).unwrap();
+        let engine = new_engine(&dir, "test", 1).unwrap();
         for i in 0..10 {
             engine
                 .set(&format!("key{:03}", i), &format!("val{}", i))
@@ -303,7 +303,7 @@ fn from_dir_reloads_after_compaction() {
 #[test]
 fn exists_returns_true_after_set() {
     let dir = temp_dir("exists_true");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "v").unwrap();
     assert!(engine.exists("k"));
 }
@@ -318,7 +318,7 @@ fn exists_returns_false_for_missing_key() {
 #[test]
 fn exists_returns_false_after_delete() {
     let dir = temp_dir("exists_delete");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("k", "v").unwrap();
     engine.delete("k").unwrap();
     assert!(!engine.exists("k"));
@@ -327,7 +327,7 @@ fn exists_returns_false_after_delete() {
 #[test]
 fn exists_returns_true_for_flushed_key() {
     let dir = temp_dir("exists_flushed");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("k", "v").unwrap();
     assert!(engine.exists("k"));
 }
@@ -337,7 +337,7 @@ fn exists_returns_true_for_flushed_key() {
 #[test]
 fn list_keys_returns_all_live_keys() {
     let dir = temp_dir("list_keys");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -350,7 +350,7 @@ fn list_keys_returns_all_live_keys() {
 #[test]
 fn list_keys_excludes_deleted_keys() {
     let dir = temp_dir("list_keys_delete");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -381,7 +381,7 @@ fn list_keys_spans_memtable_and_segments() {
 #[test]
 fn range_basic_memtable() {
     let dir = temp_dir("range_basic");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -422,7 +422,7 @@ fn range_spans_memtable_and_segment() {
 #[test]
 fn range_after_compaction() {
     let dir = temp_dir("range_compact");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -443,7 +443,7 @@ fn range_after_compaction() {
 #[test]
 fn range_tombstone_suppression() {
     let dir = temp_dir("range_tombstone");
-    let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+    let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
     engine.set("a", "1").unwrap();
     engine.set("b", "2").unwrap();
     engine.set("c", "3").unwrap();
@@ -465,7 +465,7 @@ fn range_tombstone_suppression() {
 fn wal_recovers_unflushed_writes() {
     let dir = temp_dir("wal_recover");
     {
-        let mut engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
+        let engine = new_engine(&dir, "test", BIG_MEMTABLE).unwrap();
         engine.set("k1", "v1").unwrap();
         engine.set("k2", "v2").unwrap();
     }
@@ -485,11 +485,11 @@ fn wal_recovers_unflushed_writes() {
 fn wal_recovers_unflushed_delete() {
     let dir = temp_dir("wal_delete");
     {
-        let mut engine = new_engine(&dir, "test", 1).unwrap();
+        let engine = new_engine(&dir, "test", 1).unwrap();
         engine.set("k1", "v1").unwrap();
     }
     {
-        let mut engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
+        let engine = engine_from_dir(&dir, "test", BIG_MEMTABLE).unwrap();
         engine.delete("k1").unwrap();
     }
 
@@ -502,7 +502,7 @@ fn wal_recovers_unflushed_delete() {
 #[test]
 fn compact_many_keys_preserves_all() {
     let dir = temp_dir("compact_many");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     for i in 0..50 {
         engine
             .set(&format!("key{:03}", i), &format!("val{}", i))
@@ -523,7 +523,7 @@ fn compact_many_keys_preserves_all() {
 #[test]
 fn compact_overwrites_keep_latest() {
     let dir = temp_dir("compact_overwrite");
-    let mut engine = new_engine(&dir, "test", 1).unwrap();
+    let engine = new_engine(&dir, "test", 1).unwrap();
     for round in 0..3 {
         for i in 0..10 {
             engine
